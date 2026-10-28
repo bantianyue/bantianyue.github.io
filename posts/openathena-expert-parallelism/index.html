@@ -1,0 +1,101 @@
+<section class="container" style="font-family: -apple-system-font,BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB , Microsoft YaHei UI , Microsoft YaHei ,Arial,sans-serif;font-size: 14px;line-height: 1.75;text-align: left;">
+<style>
+/* 传送门统一样式（add-portal.py动态注入时引用此class；真身在内联style，class仅兜底） */
+.portal-title { font-size:12px; color:#1a6ba0; font-weight:bold; }
+.portal-links { font-size:12px; color:#0F4C81; }
+.portal-links a { color:#0F4C81; text-decoration:none; }
+</style>
+<section style="background:#e8f4fd;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:18px;margin-top:0 !important;">
+<section style="text-align:center;margin-bottom:10px;">
+<strong style="font-weight:bold;font-size:16px;color:#1a6ba0;">要点速览</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">50% 更大</strong>：专家并行让路由专家权重分片常驻各GPU、只搬token：同样约23B激活参数，总参数从360B提到535B。FSDP每层每GPU传约20 GiB权重，EP只传约6 GiB。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">固定容量协议</strong>：自研fixed-pooled-wave-all-to-all给token指派预留静态容量池，容量因子控制丢弃：单机架256k tokens/s、中位MFU 24%、丢弃率2.4%。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">21.5% MFU</strong>：英雄训练丢弃率稳定约3.5%、MFU 21.5%；扩展梯证明5.5-7.1% 训练丢弃换来18-35% 算力效率增益；82k步后切ragged-all-to-all，丢弃归零、MFU约23%。。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Open Athena把360B-A23B的MoE推到535B-A23B：同样约23B激活参数，总参数大50%。英雄训练跑在NVL72上，自研固定容量EP内核达到21.5% MFU，指派丢弃率3.4%。</p>
+
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">专家并行解锁50% 更大的模型</h2>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">专家并行（EP）解锁了约50% 更大的模型：同样约23B激活参数，总参数从360B提到535B</li><li style="margin: 0.4em 0;">英雄训练用固定容量EP内核跑在NVL72集群上，模型FLOPs利用率（MFU）21.5%，token-expert指派丢弃率3.4%</li></ul>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Open Athena选MoE的理由直接：给定算力预算下拿到更大的模型容量。早期小实验验证了32B总参数、5B激活的MoE跑326B token的方案。MoE每个token只激活部分专家权重，总参数可以涨而每token算量不按比例涨；相比同等总参数的稠密模型，MoE每token的FLOPs一般更少，固定FLOP预算下能训更多token。实际收益还取决于通信、padding和内核效率。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">从FSDP到现成内核再到自研内核的路径上，每个选项都在token丢弃率、吞吐和模型容量之间权衡。下面是这段路的记录。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/moe-token-routing.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图1：学到的路由器给每个token选4个专家中的2个，层把它们的加权输出合成输出token表示</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">先算硬件账:NVL72</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Transformer训练依赖高效矩阵乘，操作数和输出得塞进加速器HBM。BF16/FP32混合精度加Adam优化器，模型状态每参数16字节：535B模型光BF16权重、BF16梯度、FP32主权重、FP32优化器状态就要近8 TiB，还不算激活、通信缓冲。单张B200只有185 GiB：必须多卡分片。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">分片就是把权重或激活切到多加速器上：DP、FSDP、EP都是分片方法，实际经常组合用。跨节点/机架分片引入通信，代价看互联：NVLink域内比跨机架的InfiniBand快。训练用NVL72机架：每机架保证16节点、每节点4张B200；机架内每GPU每方向900 GB/s NVLink带宽，机架间InfiniBand每GPU每方向50 GB/s：18倍差距。64张卡在线的机架算健康，单机架约11.6 TiB HBM。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/gb200-node-nvl72.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图2：训练配置机架内用NVLink、跨机架用InfiniBand。每GPU每方向峰值带宽900 GB/s和50 GB/s</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">后文的“token”指流经LLM层的token向量表示。EP语境里，“dispatch”指把token送到被指派的专家，“combine”指把专家输出送回源GPU并合成层输出。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">FSDP及其极限</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">分片方式怎么选？DP把batch切到各GPU，固定全局batch下每GPU处理的token少、激活内存降，但普通DP每卡存全量参数、梯度和优化器状态：模型状态超单卡内存就无解。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">FSDP把权重、梯度、优化器状态也切开：每GPU处理不同的batch分片，算一层前先gather权重各自算自己的token，反向算出梯度后再合并、把分片分发回负责更新的GPU。FSDP用网络通信换更大的模型。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">NVL72机架的内存和互联带宽允许纯FSDP高效训大模型。最初计划是用纯FSDP训360B-A23B：单机架能塞下的最大模型。然后问题变成：能不能把模型容量再往上推？</p>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">模型可能超过单个NVLink域的内存容量；同样batch和内存策略下，这要求跨机架通信，通信代价上升</li><li style="margin: 0.4em 0;">单层的权重和激活可能超过单加速器的内存，触发OOM</li><li style="margin: 0.4em 0;">传激活可能比传权重更划算，到这个点上，对专家MLP权重EP就比FSDP更高效</li></ul>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">互联带宽对FSDP效率影响巨大：跨机架分片的通信代价高一个数量级；GPU可以在传输时做别的计算（通信/计算重叠）来掩盖。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/fsdp.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图3：FSDP把模型状态分片到各GPU，算层前gather权重；每GPU处理自己的token，之后合并梯度再分发分片</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">EP:权重不动,token动</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">把MoE从小实验放大到英雄形状，路由专家MLP权重很快占了权重的绝大多数：360B总参数的模型里约97% 是专家MLP权重。纯FSDP里每GPU计算前要gather全部专家权重，这些临时权重叠在优化器状态、梯度和激活之上。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">EP让专家权重分片常驻各GPU：把token表示送到拥有被选专家的GPU，算完把输出送回来。EP不gather全部专家权重，也解锁了更大的总容量形状：535B-A23B，同样约23B激活参数下模型大50%。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">具体配置：384个路由专家，每token激活8个，另有2个共享专家处理每个token；LatentMoE把路由token从6144维投影到3072维再dispatch，dispatch和返回的token payload减半。路由专家权重EP分片，共享专家和大部分非专家权重FSDP分片。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">笔算对比（平衡路由、忽略padding/元数据/反向通信）：同样模型形状，FSDP前向每GPU每层要传约20 GiB路由专家权重；EP的dispatch+combine每GPU每层约6 GiB。固定top-k、token宽度、token数、GPU数时，专家越多，FSDP通信代价越高，EP的token payload不变。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/fsdp-ep.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图4：EP让路由专家权重留在被指派的GPU上，token表示送过去算；非专家权重仍走FSDP</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">从ragged-all-to-all到固定容量</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">MoE里学到的路由器给每个专家分配的token数随路由权重和数据波动。哪个集合通信能高效处理这种变长指派？路由不均衡实现上怎么处理？</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">专用EP通信库有DeepEP、Hybrid-EP、NCCL EP、MoonEP，还有Mixture-of-Kittens这类MoE megakernel：大多在JAX/XLA环境里直接用不了。ragged-all-to-all支持变长数据片，天生适合EP通信，但早期实验只有15% MFU，还遇到过慢传输、失败和NCCL hang（早期用的是不同模型和精度配置，所以后来的MFU数字不能全算通信内核的功劳）。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">profile显示机架内网络根本没打满，计算通信重叠远非最优。把ragged-all-to-all的问题报给NVIDIA后，团队转向自研EP通信内核。GPU配额比预期到得早，更新后的计划是：以不低于20% MFU的体面下限支撑最优模型形状，尽快开英雄训练，边训边改内核。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">自研的fixed-pooled-wave-all-to-all给token指派预留静态容量：每个发送GPU给每个目标GPU建一个池，本地6个专家共享池；忙的专家可以用闲专家没用掉的传输槽。容量因子控制给不均衡留多少余量：乘在均衡路由预期指派数上，sender容量按发送-目标对算，receiver容量按专家、跨所有发送方算。目标池满了发送方丢指派，专家容量满了接收方丢指派；容量因子越大丢得越少，但内存和通信开销越大。接收方按轮询从各源GPU取指派，减少发送顺序偏差。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">固定容量让团队能用久经考验的高效all-to-all集合通信和GEMM做MLP计算；本地专家ID跟着激活payload走，接收方按ID分组行，不用单独的元数据集合通信。dispatch和combine分3个token波次，降内存占用：发送和接收缓冲只按一波配，XLA调度时可能重叠部分波次。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/fixed-pool-protocol.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图5：固定容量协议按目标GPU汇聚指派，专家ID随激活payload走；dispatch和combine分三波降内存</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">丢弃的token会吃掉容量优势吗</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">单机架、4k序列长度下达到约256k tokens/s，中位MFU 24%、中位指派丢弃率2.4%（200步跑的最后50步，sender容量因子1.05、receiver 1.33）。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">token-expert指派丢弃率是因容量溢出被丢的指派占比。某个token的某条指派出局时，输出token还能拿到存活专家指派、共享专家和残差路的贡献。实验里固定每GPU输入token数时序列越长丢弃率越高：同一序列的token倾向选相同专家。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">535B-A23B有了高效的EP+FSDP配置，丢弃率小但非零；替代方案是360B-A23B的无丢弃纯FSDP。即使预期效率和丢弃率都能改进，也得先搞清最坏情况：观测到的丢弃率会不会抵消大模型的容量优势？</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">四级扩展梯实验（54M到约1B激活参数）对比小FSDP模型和大EP+LatentMoE模型：EP度、每机架batch、序列长度都按英雄训练的预期值，逼近它的丢弃行为。无丢弃评测下，EP+LatentMoE在每个尺寸上loss都更低，尽管训练丢弃率约5.5-7.1%。等吞吐假设下，loss差对应约18-35% 的算力效率增益；loss标度公式估计FSDP要1.18-1.35倍算力才能追上EP的loss。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">结论支持选EP：测试配置里有指派丢弃，大模型的loss优势依然成立。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/ep-results-8062.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图6：无丢弃评测下，更大的EP+LatentMoE模型在每个测试尺寸上loss都更低</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">英雄训练:21.5% MFU</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">固定容量EP让535B-A23B可训，扩展梯支持用小的指派丢弃率换更大的模型容量。英雄训练的公开WandB报告已发布。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">丢弃率面板里指派丢弃率稳定在约3.5%，丢弃大多来自发送池；接收方丢弃训练早期就降到接近零，路由熵之后基本稳定。固定容量内核在生产训练里维持约21.5% MFU。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">与此同时ragged-all-to-all的修复也在推进。约82k步时切到改进版ragged-all-to-all：指派丢弃几乎归零，MFU升到约23%。后续还有改动，ragged-all-to-all的修复和改进计划另写一篇。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/hero-run-metrics.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图7：535B-A23B生产训练中的吞吐、MFU、指派丢弃率和路由熵</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">贡献与引用</h2>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;"><strong>Rafal Wojdyla</strong>：初始EP实验与profiler集成、EP通信内核评测、自研EP内核实现、EP接入英雄模型</li><li style="margin: 0.4em 0;"><strong>Matt Wittmann</strong>：生产级ragged-all-to-all后端与后续性能改进，省下数周算力</li><li style="margin: 0.4em 0;"><strong>Larry Dial</strong>：设计并跑EP vs FSDP扩展梯实验，拍板最终决策；实现receiver溢出轮转</li><li style="margin: 0.4em 0;"><strong>Will Held</strong>：协助设计FSDP与EP实验</li><li style="margin: 0.4em 0;"><strong>Mark Muchane</strong>：移植MoK megakernel并在Marin上评测</li><li style="margin: 0.4em 0;"><strong>David Hall</strong>：早期EP实现与正确性修复，包括ring EP、ragged-all-to-all、DeepEP集成</li><li style="margin: 0.4em 0;"><strong>Russell Power</strong>：跑ragged-all-to-all实验并改进infra性能</li></ul>
+<pre style="background-color:#272822;color:#f8f8f2;padding:12px 16px;border-radius:4px;white-space:pre;overflow-x:auto;font-family:Consolas,Monaco,'Courier New',monospace;font-size:13px;line-height:1.5;margin:1em 4px;border-left:4px solid #66d9ef;"><code><span style="color: #F8F8F2">@misc</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #F8F8F2">wojdyla2026_expert_parallelism,</span><br/><span style="color: #F8F8F2">&nbsp;&nbsp;author&nbsp;</span><span style="color: #FF4689">=</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #F8F8F2">Wojdyla,&nbsp;Rafal</span><span style="color: #ED007E; background-color: #1E0010">}</span><span style="color: #F8F8F2">,</span><br/><span style="color: #F8F8F2">&nbsp;&nbsp;title&nbsp;</span><span style="color: #FF4689">=</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #F8F8F2">Expert&nbsp;parallelism&nbsp;</span><span style="color: #66D9EF">at</span><span style="color: #F8F8F2">&nbsp;hero&nbsp;scale</span><span style="color: #ED007E; background-color: #1E0010">}</span><span style="color: #F8F8F2">,</span><br/><span style="color: #F8F8F2">&nbsp;&nbsp;</span><span style="color: #A6E22E">year</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #FF4689">=</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #AE81FF">2026</span><span style="color: #ED007E; background-color: #1E0010">}</span><span style="color: #F8F8F2">,</span><br/><span style="color: #F8F8F2">&nbsp;&nbsp;</span><span style="color: #A6E22E">month</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #FF4689">=</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #F8F8F2">sep</span><span style="color: #ED007E; background-color: #1E0010">}</span><span style="color: #F8F8F2">,</span><br/><span style="color: #F8F8F2">&nbsp;&nbsp;howpublished&nbsp;</span><span style="color: #FF4689">=</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #ED007E; background-color: #1E0010">{\</span><span style="color: #F8F8F2">url</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #F8F8F2">https:</span><span style="color: #FF4689">//</span><span style="color: #F8F8F2">www.openathena.ai</span><span style="color: #FF4689">/</span><span style="color: #F8F8F2">blog</span><span style="color: #FF4689">/</span><span style="color: #F8F8F2">expert</span><span style="color: #FF4689">-</span><span style="color: #F8F8F2">parallelism</span><span style="color: #FF4689">/</span><span style="color: #ED007E; background-color: #1E0010">}}</span><span style="color: #F8F8F2">,</span><br/><span style="color: #F8F8F2">&nbsp;&nbsp;note&nbsp;</span><span style="color: #FF4689">=</span><span style="color: #F8F8F2">&nbsp;</span><span style="color: #ED007E; background-color: #1E0010">{</span><span style="color: #66D9EF">Open</span><span style="color: #F8F8F2">&nbsp;Athena&nbsp;Blog</span><span style="color: #ED007E; background-color: #1E0010">}</span><br/><span style="color: #ED007E; background-color: #1E0010">}</span></code></pre>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="background:#f5f0eb;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:16px;">
+<section style="text-align:center;margin-bottom:8px;">
+<strong style="font-weight:bold;font-size:15px;color:#8b6f4c;">结语</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">Open Athena的专家并行把360B-A23B推到535B-A23B：同样约23B激活参数，总参数大50%，靠的是EP让路由专家权重分片常驻、只搬token（FSDP每层每GPU传20 GiB权重，EP只传6 GiB）。<br  /><br  />自研fixed-pooled-wave-all-to-all协议用静态容量池驯服ragged路由：单机架256k tokens/s、中位MFU 24%、丢弃率2.4%；扩展梯证明5.5-7.1% 的训练丢弃换来18-35% 算力效率增益。<br  /><br  />英雄训练在NVL72上跑出21.5% MFU、3.5% 丢弃率；82k步后切改进版ragged-all-to-all，丢弃归零、MFU约23%。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="text-align:center;">
+<span class="portal-title" style="font-size:12px;color:#1a6ba0;font-weight:bold;">【传送门】</span>
+<section style="text-align:left;display:inline-block;font-size:12px;color:#0F4C81;" class="portal-links">
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/gtJz2ekQnYFxpDLctjjy3g" target="_blank" data-linktype="2">Kimi K3技术解析之LatentMoE: 隐藏维度压缩至潜空间，通信与带宽开销同比例骤降</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/CYCs6dgCsKhNlfDHb7trXA" target="_blank" data-linktype="2">KVCache缝合术: 突破前缀匹配天花板,首Token快14倍 多文档快2~4倍</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/42s6fk-xdo23L-vtLj6Q8Q" target="_blank" data-linktype="2">vLLM+Mooncake: 把agentic前缀复用从1.7%拉到92.2%</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/3btXHAVd8_x5CM5CWETc2g" target="_blank" data-linktype="2">Agent卷向AI Infra: SGLang团队用硬核Agent优化框架和CUDA Kernal性能</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/HPaDwcT_4Rw5ty7LwDG4Ng" target="_blank" data-linktype="2">Torch Profiler在Trace里分析性能瓶颈: 剖析SGLang LLM推理</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/4aEYa-5J2Ir82V_1_9anDA" target="_blank" data-linktype="2">AI芯片架构全景: 从NVIDIA到Groq的六条设计路线</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/YHmkt8EHFGm-HeflWCsB2w" target="_blank" data-linktype="2">英伟达Kernel Agent: 编译器与算子调优Agent的协同设计</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/OoHu1yeuh1gzgCfEiPvDuQ" target="_blank" data-linktype="2">RL的下一个大突破：不是优化可验证问题而是把'不可验证'领域变得'可验证'</a><br>
+</section>
+</section>
+
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;"><span style="font-size:12px;color:#888888;font-family:'Courier New',monospace;">参考：https://openathena.ai/blog/expert-parallelism/</span></p>
+</section>

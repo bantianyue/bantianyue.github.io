@@ -1,0 +1,69 @@
+<section class="container" style="font-family: -apple-system-font,BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB , Microsoft YaHei UI , Microsoft YaHei ,Arial,sans-serif;font-size: 14px;line-height: 1.75;text-align: left;">
+<style>
+/* 传送门统一样式（add-portal.py动态注入时引用此class；真身在内联style，class仅兜底） */
+.portal-title { font-size:12px; color:#1a6ba0; font-weight:bold; }
+.portal-links { font-size:12px; color:#0F4C81; }
+.portal-links a { color:#0F4C81; text-decoration:none; }
+</style>
+<section style="background:#e8f4fd;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:18px;margin-top:0 !important;">
+<section style="text-align:center;margin-bottom:10px;">
+<strong style="font-weight:bold;font-size:16px;color:#1a6ba0;">要点速览</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">- <strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">硬件</strong>：NVFP4 推理 5 倍 FLOPS，HBM 带宽 2.4 倍，NVLink 带宽 1.7 倍<br  /><br  />- <strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">优化</strong>：Locality domain 切分 MoE 权重，SM 只读最近的内存，小 token 平均快 1.2 倍<br  /><br  />- <strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">成绩</strong>：AgentX 上每 GPU 吞吐达 GB200 的 7.8 倍，MLPerf VLM 达 GB300 的 3.7 倍</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">NVIDIA Vera Rubin 发布后，Inferact、NVIDIA、Red Hat 和 vLLM 社区就开始把 vLLM 往 Vera Rubin NVL72 上搬。现在 daily 容器有了，DeepSeek、Kimi、GLM、MiniMax 的模型都能跑。早期成绩：AgentX 上每 GPU 吞吐是 GB200 NVL72 的 7.8 倍。</p>
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">单卡对比：NVFP4 推理 FLOPS 5 倍，HBM 从 HBM3e 升到 HBM4、带宽 2.4 倍（8 到 19.2 TB/s），NVLink 从第 5 代到第 6 代、双向带宽 1.7 倍（1.8 到 3 TB/s）。Softmax 的指数吞吐也提了：FP32 2 倍，BF16/FP16 4 倍，跟得上更快的矩阵运算。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">张量核：BF16 1.6 倍，FP8 3.5 倍，NVFP4 训练 3.5 倍、推理 5 倍。晶体管 1.6 倍。交互图里 hover 每个指标会高亮 GPU 对应部位，Show table 列全部数值。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/fig01-specs.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图1: Vera Rubin NVL72 与 GB200 NVL72 单卡对比，hover 高亮 GPU 部位，Show table 列全部数值</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Rubin 平台是机架级协同设计，五套专用系统：Vera Rubin NVL72、Vera CPU 机架、Groq 3 LPX、Spectrum-6 SPX、BlueField-4 STX 存储。单台 NVL72 的 NVFP4 推理 FLOPS 是 GB200 的 5 倍，内存带宽 2.4 倍。第六代 NVLink 让集合通信（AllReduce、All2all）更快，prefill/decode 分离、大专家并行都受益。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/vera-rubin-platform.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图2: NVIDIA Vera Rubin 平台概览</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Ampere 起 NVIDIA GPU 就有非均匀全局内存访问。CUDA 13.4 的 locality domain 让应用把计算和数据放在同一域里：SM 读本域 HBM 带宽更高、延迟更低。配 Green Contexts 和 CUDA stream，每个域起一个 kernel，各读各的本地内存。MoE decode 正好吃这一口，因为瓶颈在读权重。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">做法是 split-N：FC1 和 FC2 的权重按列切两半，每半放一个域的全局内存，各域 SM 只读自己那半，跨域访问基本消除。激活内存 decode 时小，不做本地化开销可忽略。SM 不一定能等分，默认只用到 200 个，开 cudaDevSmResourceGroupBackfill 能用满 212 个。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/fig03-splitn.gif"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图3: Split-N MoE 前向 6 步动画。权重按列切分，各域 SM 只读本地 HBM</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">MiniMax M3 的 MoE 形状实测：开 locality domain，小 token 前向平均快 1.2 倍，TP2/TP4/EP2/EP4 趋势一致。默认模式（200 SM）增益也差不多，因为小 token decode 就是权重搬运主导，本地化直接提 HBM 吞吐。这只是起点，还有调优空间。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/fig04-latency.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图5: MiniMax M3 MoE 层 FC1+FC2 延迟，非本地化 vs 本地化，tab 切并行策略，toggle 切 backfill 模式</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Rubin 基于 Blackwell 架构家族，sm100f 编译的 kernel 能直接跑（新目标是 sm107，tcgen05 指令有扩展）。vLLM 的 Blackwell kernel 尤其是 GEMM 类的注意力和 MoE，不改就能上 Rubin。nightly 镜像 vllm/vllm-openai:cu134-nightly（CUDA 13.4、PyTorch 2.15）直接拉来用。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Rubin 特调 kernel 通过 FlashInfer 0.7.0 进来：dense NVFP4/MXFP4 GEMM、NVFP4 MoE、FP8 attention、FP8 MSA prefill 等。MiniMax 稀疏注意力（MSA）的 prefill kernel 也按 Rubin 调过。附录给了各 kernel 的开启参数。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">AgentX 上跑 MiniMax M3：相同交互性下每 GPU 吞吐是 GB200 的 7.84 倍，150 TPS 约束下 5.18 倍。MLPerf Inference v6.1 是 vLLM 第一次上 Rubin NVL72 的公开测试，Qwen3-VL-235B-A22B 的 VLM 榜上，offline、server、interactive 三场景吞吐都是 GB300 NVL72 的 3.7 倍。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">后续计划：FlashInfer 的 sm107 MegaMoE 进 vLLM、locality domain 全量用于 MoE 层、PDL 和 Lamport Sync 挖层间重叠、mega kernel 搞延迟敏感场景、Kimi K3 的 KDA/MLA 在 Rubin 上调优、DeepSeek-V4.1-Flash 的 CSA/HCA kernel、MSA decode kernel 收尾、CFT counted-write MoE all-to-all 进 FlashInfer。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="assets/agentx-results.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图6: SemiAnalysis AgentX 结果，vLLM 在 Rubin 上跑 MiniMax M3</figcaption></figure>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="background:#f5f0eb;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:16px;">
+<section style="text-align:center;margin-bottom:8px;">
+<strong style="font-weight:bold;font-size:15px;color:#8b6f4c;">结语</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">vLLM 上 Rubin 的策略是两条腿：Day-0 靠 Blackwell 兼容性先跑起来，性能靠 FlashInfer 的 Rubin 特调 kernel 和 locality domain 这类新硬件特性慢慢抠。7.8 倍里有硬件的功劳，也有 MoE 权重就近读这类软件优化。按路线图，MegaMoE、层间重叠、KDA/MLA 调优都还在路上。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="text-align:center;">
+<span class="portal-title" style="font-size:12px;color:#1a6ba0;font-weight:bold;">【传送门】</span>
+<section style="text-align:left;display:inline-block;font-size:12px;color:#0F4C81;" class="portal-links">
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/4aEYa-5J2Ir82V_1_9anDA" target="_blank" data-linktype="2">AI芯片架构全景: 从NVIDIA到 Groq的六条设计路线</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/42s6fk-xdo23L-vtLj6Q8Q" target="_blank" data-linktype="2">vLLM+Mooncake: 把agentic前缀复用从1.7%拉到92.2%</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/3btXHAVd8_x5CM5CWETc2g" target="_blank" data-linktype="2">Agent卷向AI Infra: SGLang团队用硬核Agent优化框架和CUDA Kernal性能</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/gtJz2ekQnYFxpDLctjjy3g" target="_blank" data-linktype="2">Kimi K3技术解析之LatentMoE: 隐藏维度压缩至潜空间，通信与带宽开销同比例骤降</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/i-NZ-4oCXs48XpDfdcBfPw" target="_blank" data-linktype="2">在NVFP4上超越cuBLAS: 从零手写+Claude极限优化Blackwell GEMM</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/HPaDwcT_4Rw5ty7LwDG4Ng" target="_blank" data-linktype="2">Torch Profiler在Trace里分析性能瓶颈: 剖析SGLang LLM推理</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/YHmkt8EHFGm-HeflWCsB2w" target="_blank" data-linktype="2">英伟达Kernel Agent: 编译器与算子调优Agent的协同设计</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/OoHu1yeuh1gzgCfEiPvDuQ" target="_blank" data-linktype="2">RL的下一个大突破：不是优化可验证问题而是把'不可验证'领域变得'可验证'</a><br>
+</section>
+</section>
+
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;"><span style="font-size:12px;color:#888888;font-family:'Courier New',monospace;">参考：https://vllm.ai/blog/2026-10-09-vera-rubin-preview</span></p>
+</section>

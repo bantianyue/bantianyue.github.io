@@ -1,0 +1,126 @@
+<section class="container" style="font-family: -apple-system-font,BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB , Microsoft YaHei UI , Microsoft YaHei ,Arial,sans-serif;font-size: 14px;line-height: 1.75;text-align: left;">
+<style>
+/* 传送门统一样式（add-portal.py动态注入时引用此class；真身在内联style，class仅兜底） */
+.portal-title { font-size:12px; color:#1a6ba0; font-weight:bold; }
+.portal-links { font-size:12px; color:#0F4C81; }
+.portal-links a { color:#0F4C81; text-decoration:none; }
+</style>
+<section style="background:#e8f4fd;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:18px;margin-top:0 !important;">
+<section style="text-align:center;margin-bottom:10px;">
+<strong style="font-weight:bold;font-size:16px;color:#1a6ba0;">要点速览</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">头号结果</strong>：GB300 NVL72加P/D分离与Wide-EP，单卡954K tokens/s，P90每用户196 tokens/s，成本每GPU小时38.96美元。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">追平DeepInfer</strong>：GB200解码在批量8到256内与DeepInfer差距在6% 以内，GB300 DEP2 Prefill贴合其公开曲线。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">Prefill取DEP2</strong>：镜像与滞后重放显示DEP4失衡损失13.6%，DEP2仅5.9%，三项优化合计提升35.6% 到43.9%。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">解码靠Wide-EP与EPLB</strong>：EPLB把均衡度从0.35提升到0.94，大规模下CPU开销修复成为关键，专用解码路径把单用户速度推到826 tokens/s。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">一台NVIDIA GB300 NVL72机架上，vLLM用P/D分离与Wide-EP跑DeepSeek-V4.1-Flash，在SemiAnalysis AgentX上做到单卡954K tokens/s，P90交互性为每用户196 tokens/s，相对首篇单节点结果提升7.9倍，每GPU小时成本38.96美元。单用户专用解码路径达到826 tokens/s。对标DeepSeek自家引擎DeepInfer，解码差距在6% 以内，Prefill曲线贴合。</p>
+
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">性能总览:单机架跑出954K tokens/s</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">一台NVIDIA GB300 NVL72机架上，vLLM用P/D分离与Wide-EP服务DeepSeek-V4.1-Flash，在SemiAnalysis AgentX上达到单卡<strong>954K tokens/s</strong>，P90交互性为每用户196 tokens/s。这个数字统计了缓存输入、未缓存输入与输出token，相对首篇单节点结果提升<strong>7.9倍</strong>，每GPU小时成本按DeepSeek非高峰价格折算为38.96美元。</p>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;"><strong>通用引擎能够追平专用引擎</strong>：vLLM在解码与Prefill上追平DeepInfer的公开曲线。</li><li style="margin: 0.4em 0;"><strong>优化前先理解模型</strong>：KV占用、注意力结构与MoE占比决定优化方向。</li><li style="margin: 0.4em 0;"><strong>Prefill适合小DEP实例</strong>：DEP2在失衡下只损失5.9% 的吞吐。</li><li style="margin: 0.4em 0;"><strong>Wide-EP解码配合EPLB扩展性好</strong>：专家均衡度从0.35提升到0.94。</li><li style="margin: 0.4em 0;"><strong>NVL72规模下CPU开销成为关键</strong>：同步与准入路径的修复决定大规模实测速度。</li><li style="margin: 0.4em 0;"><strong>小批量需要专用解码路径</strong>：单用户速度从575 tokens/s提升到826 tokens/s。</li></ul>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig01.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图1：GB300 NVL72上SemiAnalysis AgentX：P/D分离与Wide-EP组合（金色）相对首篇单节点聚合结果，单卡吞吐提升7.9倍，P90交互性同步提高。</figcaption></figure>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">与DeepInfer对标</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">DeepInfer是DeepSeek自家面向DeepSeek-V4.1-Flash的推理引擎，本周以离线引擎形态发布，同时公开了Prefill与解码曲线。作为同一模型最相关的参照系，先把vLLM的位置标定清楚，再展开优化细节。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">解码方面，在DeepSeek的解码配置下（131K上下文，每步3个草稿token），GB200上vLLM的单卡解码吞吐在批量8到256的范围内，与DeepInfer公开结果的差距在6% 以内。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig02.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图2：131K上下文、每步3个草稿token的配置下，GB200上vLLM解码单卡吞吐随批量变化，与DeepInfer公开结果的对比。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Prefill方面，DeepInfer公开曲线采用EP4DP4、32个冗余专家、140 token有界重放，硬件配置没有说明，数值从其说明文档的图表中读取。vLLM一侧采用GB300上DEP2、无冗余专家、128 token重放与自有提示词。两边配置不同，曲线之间的差距不能直接读成引擎之间的加速比，能成立的结论是vLLM的DEP2 Prefill在DeepInfer公开的范围内贴合其曲线。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig03.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图3：GB300上vLLM DEP2 Prefill吞吐随新增token数变化，与DeepInfer公开曲线（EP4DP4、32个冗余专家、140 token有界重放）的对比。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">两个引擎接近有同源背景：DeepInfer最初基于vLLM构建，vLLM则持续集成DeepSeek开源库中的内核，包括MegaAttn、MegaMoE与Mega-mHC，并在周围做了大量栈级优化。区别在于定位：DeepInfer面向单个模型与离线模式，同一套vLLM构建同时支持在线P/D分离与Wide-EP，跑满整台NVL72机架，后续章节测量的就是这套在线配置。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">先测模型:速度从哪里来</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">调优之前，先把DeepSeek-V4.1-Flash的架构特性量化清楚，三个结论直接决定后续优化方向。</p>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;"><strong>KV缓存占用很小</strong>：跨层KV共享加FP4压缩之后，全局KV缓存每token只要890字节。</li><li style="margin: 0.4em 0;"><strong>注意力本身很轻</strong>：第2、8、14层用2倍压缩做全上下文索引；有界重放下，第20层为全部token写全局KV，但只对最近128个token做索引与注意力计算，第21到39层只处理这部分token。</li><li style="margin: 0.4em 0;"><strong>解码即使在长上下文下也是MoE主导</strong>：DEP4、128K上下文、每rank 64请求时，MoE占目标模型单步时间的62%，注意力与索引合计只占13%。</li></ul>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">下表是DEP32、每rank 16请求、每请求6个token（1个正式token加5个DSpark草稿token）、全部请求取相同上下文长度时，GB300上目标模型的前向时间。上下文从128K扩大到855K，相当于6.7倍，目标模型解码延迟只增加0.6毫秒，增幅7%。</p>
+<section style="overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;"><table class="preview-table" style="color: #3f3f3f;margin-top: 0 !important;">
+<thead style="font-weight: bold;color: #3f3f3f;">
+<tr><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">每请求上下文</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">64K</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">128K</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">256K</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">512K</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">855K</th></tr>
+</thead>
+<tbody>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">目标模型前向时间（毫秒）</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">8.86</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">8.93</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">9.03</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">9.25</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">9.53</td></tr>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">相对128K</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">-0.8%</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">基准</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">+1.1%</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">+3.6%</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">+6.7%</td></tr>
+</tbody>
+</table></section>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">模型特性决定的优化方向</h3>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;"><strong>Prefill适合小DEP实例</strong>：B300或GB300上一个DEP2实例就能同时装下模型权重与多会话KV缓存，更小的并行规模让DP与EP负载均衡简单得多。</li><li style="margin: 0.4em 0;"><strong>KV容量很少成为批量上限</strong>：KV缓存轻松装进HBM，可以把每个算子推到计算或访存带宽上限，而不是绕着KV容量做妥协，测量过程也没有抢占或KV压力带来的噪声。</li><li style="margin: 0.4em 0;"><strong>Wide-EP对解码直接有效</strong>：MegaMoE解码受权重读取制约，Wide-EP正好削减这项主导成本。</li><li style="margin: 0.4em 0;"><strong>解码DP负载均衡可以简化</strong>：模型解码步时间随上下文长度变化很小，均衡策略可以简化为按每rank请求数取最小负载。</li><li style="margin: 0.4em 0;"><strong>解码测量用合成负载仍然有代表性</strong>：取平均输入与输出长度，就能较好估计性能，不必重放完整智能体轨迹。</li></ul>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">测量方法:先分清GPU时间与服务开销</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">测量要回答两个问题：一次Prefill或解码步本身应该花多少时间，DP与EP失衡又额外增加了多少开销。</p>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;"><strong>Prefill与解码步时间</strong>：前向基准直接走真实执行路径，测指定Prefill或解码批量的模型前向时间，只含GPU时间，轨迹干净；解码基准在给定并发下测引擎端到端解码性能，两者之间的差距就是意料之外的开销。</li><li style="margin: 0.4em 0;"><strong>Prefill DP失衡：镜像重放对滞后重放</strong>：智能体轨迹每次运行都不一样，DP失衡难以孤立测量，办法是在每个DP rank上重放完全相同的请求。镜像运行里各rank同时收到请求，滞后运行里第r个rank晚r乘5秒收到相同请求，各rank步调错开但总工作量相同，两次运行的差值就是DP失衡的代价。</li><li style="margin: 0.4em 0;"><strong>解码EP失衡：真实路由对均匀路由</strong>：均衡度定义为每步各rank负载的均值除以最大值，在EPLB窗口内统计。均匀路由作为均衡参照，本身仍有采样噪声：DEP32、每GPU 72请求时，均匀路由下目标模型（每token选6个专家）均衡度约0.96，草稿模型（每token选3个专家）约0.94。真实路由与均匀路由之间的差距就是专家均衡最多能追回的部分，EPLB运行结果说明实际追回了多少。</li></ul>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">Prefill:DEP2最合适</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">小DEP实例对Prefill有吸引力，实测也支持这个判断。AgentX纯Prefill运行、并发256时，DEP4的单卡吞吐只有DEP2的<strong>83%</strong>，即<strong>53.3K tokens/s对64.4K tokens/s</strong>。关闭前缀缓存的镜像与滞后重放指向DP失衡：各rank步调错开后，DEP4损失13.6% 的吞吐，DEP2只损失5.9%。DEP2因此成为默认选择。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">更干净的轨迹还暴露了随上下文长度增长的剩余瓶颈。两张GB300卡上，8K token的Prefill在无历史上下文时耗时87.9毫秒，有512K缓存上下文时耗时189.4毫秒。针对这个区间，三项改动陆续落地。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">第一，层20重放补齐。有界重放已经把第21到39层限制在最近128个token，此前第20层仍对全部新增token做索引计算。改动后，第20层为全部新增token写KV，但其余计算只跑128 token的重放批量。32K新增token时Prefill吞吐提升19.9%，增益从4K时的10.1% 增长到64K时的23.1%。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">第二，Engram页面放大。Engram从各DP rank共享的主机表做随机读取，此前的主机共享内存映射用64KB GPU页面，GPU TLB缺失频繁。把表移到主机NUMA感知的显存分配上，启用2MB GPU页面，32K新增token时Prefill吞吐再提升2.8%。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">第三，Prefill索引改用DeepSelect排序候选块，与解码路径一致。收益随参与排序的键数量增长，32K新增token时提升15.6%，64K时提升15.2%。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">三项合计，在128K缓存前缀之上，新增token的Prefill吞吐在4K到64K范围内提升<strong>35.6% 到43.9%</strong>。32K时合计增益42.5%，64K时单卡吞吐从71.2K tokens/s上升到<strong>102.5K tokens/s</strong>，增幅43.9%。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig04.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图4：128K缓存命中后，DEP2上新增token的Prefill单卡吞吐：依次叠加层20重放、Engram 2MB页面、DeepSelect Top-K排序后的变化。</figcaption></figure>
+<section style="overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;"><table class="preview-table" style="color: #3f3f3f;margin-top: 0 !important;">
+<thead style="font-weight: bold;color: #3f3f3f;">
+<tr><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">单实例Prefill吞吐（tokens/s）</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">镜像（均衡）</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">滞后（失衡）</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">损失</th></tr>
+</thead>
+<tbody>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DEP2</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">138.7K</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">130.5K</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">5.9%</td></tr>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DEP4</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">267.6K</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">231.1K</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">13.6%</td></tr>
+</tbody>
+</table></section>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">解码:Wide-EP扩展与EPLB均衡</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">解码一侧，Wide-EP与EPLB是已有实践，vLLM很早就支持两者，新发现集中在扩展规律与实测经验。DEP4扩展到DEP32、每GPU 64请求、128K上下文时，目标模型MegaMoE时间从13.4毫秒下降到6.0毫秒，因为每个rank持有的专家变少，其余工作维持在10毫秒左右。单卡吞吐增益因此逐渐收窄，到DEP32时草稿模型的通信开销也开始抵消更宽并行的好处。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig05.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图5：GB200上128K上下文、每卡64请求时，解码步时间随DEP4扩展到DEP32的变化，以及单卡输出吞吐。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">EPLB每3000步按过去1000步的负载重排一次专家。均衡度从目标模型的0.35提升到<strong>0.94</strong>，草稿模型从0.21提升到<strong>0.89</strong>，分别追回了与均匀路由之间差距的约97% 与约93%。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig06.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图6：GB300 NVL72上解码：关闭EPLB、仅目标模型启用EPLB、目标模型与DSpark草稿模型同时启用EPLB三种配置下的均衡度对比。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">两项改动让这个机制真正可用。一是基于NVLink的对称内存后端，在不停止解码的情况下不到1秒完成DEP32全量重平衡，把EPLB的副本映射与负载记录融合进MegaMoE内核（每步节省约0.2毫秒），并去掉了解码循环里的主机同步。二是支持目标模型与草稿模型异构的EPLB：DSpark草稿模型有128个路由专家、每token选3个，目标模型有384个路由专家、每token选6个，EPLB为两个模型分别跟踪专家位置与负载并分别重平衡。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">CPU开销:大规模下慢的不是GPU</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Wide-EP解码要求全部rank在每一层同步，一个掉队的rank就会拖住整个实例。异步调度在小规模下能较好隐藏CPU开销，规模扩大后难度来自两方面：GPU单步变短，留给CPU工作的余量变小；同时某个rank掉队的概率变高。实测中，未优化的DEP32反而慢于DEP16，单步<strong>17.57毫秒对13.84毫秒</strong>，尽管前者的GPU执行时间还快1.1毫秒。下表按影响大小列出找到的全部原因，每行来自不同配置，各自说明配置。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">四项修复合起来，让大规模解码的CPU开销不再成为瓶颈，也为P/D分离与Wide-EP在整机架上的结果扫清了道路。</p>
+<section style="overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;"><table class="preview-table" style="color: #3f3f3f;margin-top: 0 !important;">
+<thead style="font-weight: bold;color: #3f3f3f;">
+<tr><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">原因</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">修复</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">效果</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">配置</th></tr>
+</thead>
+<tbody>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">KV读取在解码工作线程上同步提交</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">NIXL推送加UCX散集，打包后的KV行作为单个NIXL区域发送</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">单卡141K上升到440K tokens/s，P90从约40上升到159 tokens/s每用户</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">GB300，8P1D，并发3072</td></tr>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">Gloo规约延迟随rank数线性增长</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">递归倍增CPU规约</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DP同步从每步10.8毫秒下降到1.5毫秒，单步从16.10毫秒下降到13.15毫秒</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DEP32解码</td></tr>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">准入突发：单步最多准入140个请求</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">可选上限：每步最多4次新KV加载</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">单卡460K上升到516K tokens/s，P90从109上升到153 tokens/s每用户</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">GB300，7P1D，并发4800，含另外两项CPU修复</td></tr>
+<tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">准入工作量随提示词长度增长</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">提示词作为单个int32缓冲，跳过滑动窗口块表的空块，分块提示词拷贝内核</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">855K提示词：每次准入CPU时间从38.8毫秒下降到6.0毫秒</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">引擎微基准</td></tr>
+</tbody>
+</table></section>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">小批量低延迟:专用解码路径</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">低延迟内核支持也扩展到了DeepSeek-V4.1-Flash，延续了首篇的工作。在真实AgentX会话上，专用解码路径在4张B300、TP4配置下为单用户做到P90<strong>826 tokens/s</strong>，高于标准解码路径的<strong>575 tokens/s</strong>，增幅44%。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">并发8时，专用路径为571 tokens/s，高于标准路径的379 tokens/s，增幅51%；并发16时为485 tokens/s，高于标准路径的306 tokens/s，增幅59%。小批量场景下，专用路径的收益覆盖了全部三个并发点。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig07.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图7：4张B300、TP4配置下，并发1、8、16时专用解码路径启用前后的单用户P90交互性对比。</figcaption></figure>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="background:#f5f0eb;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:16px;">
+<section style="text-align:center;margin-bottom:8px;">
+<strong style="font-weight:bold;font-size:15px;color:#8b6f4c;">结语</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">这组结果的意义不止于一组数字。DeepInfer是为单个模型打磨的离线引擎，vLLM作为通用引擎在解码与Prefill上追平其公开曲线，同时还把同一套构建以在线P/D分离与Wide-EP形态跑满整台NVL72机架，单卡954K tokens/s与P90 196 tokens/s每用户的组合，说明通用性与峰值性能不必二选一。<br  /><br  />经验可以复用到其他大模型服务上：优化前先把模型特性量化清楚，Prefill优先小DEP实例并用镜像与滞后重放分离失衡，解码用Wide-EP削减权重读取成本并用EPLB追回均衡损失，规模扩大后先查CPU同步与准入路径，小批量则用专用解码路径换交互性。每一项的收益都有具体配置与数字对应，照着复现时先对齐配置，再谈加速比。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="text-align:center;">
+<span class="portal-title" style="font-size:12px;color:#1a6ba0;font-weight:bold;">【传送门】</span>
+<section style="text-align:left;display:inline-block;font-size:12px;color:#0F4C81;" class="portal-links">
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/FaWYxLzYr36GWDVOuvtCoQ" target="_blank" data-linktype="2">Kimi K3技术解析之AttnRes: 打破Transformer沿用十年的残差各层等权的假设</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/CYCs6dgCsKhNlfDHb7trXA" target="_blank" data-linktype="2">KVCache缝合术: 突破前缀匹配天花板,首Token快14倍 多文档快2~4倍</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/OoHu1yeuh1gzgCfEiPvDuQ" target="_blank" data-linktype="2">RL的下一个大突破：不是优化可验证问题而是把'不可验证'领域变得'可验证'</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/2NmM9xDA-1eKlFs_moi7Qw" target="_blank" data-linktype="2">把KVCache变成可训练记忆：Context Tuning让LLM免权重微调</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/YHmkt8EHFGm-HeflWCsB2w" target="_blank" data-linktype="2">英伟达Kernel Agent: 编译器与算子调优Agent的协同设计</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/42s6fk-xdo23L-vtLj6Q8Q" target="_blank" data-linktype="2">vLLM+Mooncake: 把agentic前缀复用从1.7%拉到92.2%</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/nWrqMnkObaZI2tx6VtnpSA" target="_blank" data-linktype="2">Kimi K3技术报告-后训练Infra: 三阶段RL,MoonEP3,五千万沙箱,KDA感知缓存</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/gtJz2ekQnYFxpDLctjjy3g" target="_blank" data-linktype="2">Kimi K3技术解析之LatentMoE: 隐藏维度压缩至潜空间，通信与带宽开销同比例骤降</a><br>
+</section>
+</section>
+
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;"><span style="font-size:12px;color:#888888;font-family:'Courier New',monospace;">参考：https://vllm.ai/blog/2026-10-23-deepseek-v41-flash-pd-wide-ep</span></p>
+</section>
