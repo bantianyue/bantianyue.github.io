@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Muse 申请实录：注册、年龄验证、每周免费额度与邀请码，以及我踩过的坑</title></head><body>
+<section class="container" style="max-width:760px;margin:0 auto;padding:16px;font-family:-apple-system-font,BlinkMacSystemFont,Helvetica Neue,PingFang SC,Hiragino Sans GB,Microsoft YaHei UI,Microsoft YaHei,Arial,sans-serif;font-size:15px;line-height:1.8;color:#3f3f3f;">
+<h1 style="font-size:22px;color:#0F4C81;">Muse 申请实录：注册、年龄验证、每周免费额度与邀请码，以及我踩过的坑</h1>
+<p style="color:#888;font-size:13px;">2026-10-28 · 前后折腾了 6 天（10-23 到 10-28）</p>
+
+<section style="background:#e8f4fd;padding:14px 16px;border-radius:6px;margin:18px 0;">
+<strong style="color:#1a6ba0;">要点速览</strong><br>
+- Muse（muse.ai，Meta 的个人 Agent 应用）只对北美开放，<strong>必须是美国住宅 IP</strong>，机房 IP 直接进 waitlist。<br>
+- 登录用邮箱验证码（Meta 账号），没有密码；生日必须填成年日期。<br>
+- 年龄验证要么连 Instagram/Facebook，要么绑卡扣 $1（5–7 个工作日退回）。国内银联卡基本过不了，我最后用海外虚拟 Visa 卡过的。<br>
+- 过了验证后在 Settings → General → Usage 看到 Free plan 每周额度，再在同一页兑好友邀请码（入驻 48 小时内），双方各得 10 亿 Muse tokens。
+</section>
+
+<h2 style="font-size:18px;color:#0F4C81;">一、整体流程</h2>
+<ol>
+<li>准备一个<strong>美国住宅 IP</strong> 的浏览器环境（见第二节）。</li>
+<li>打开 muse.ai，用邮箱登录，填邮箱验证码（例如 you@example.com）。</li>
+<li>首次进入要建 Meta 账号：填名字、<strong>成年生日</strong>，点 Get started。</li>
+<li>年龄验证：选「用卡验证」，填卡号、有效期、CVV、国家、ZIP，扣 $1 预授权。</li>
+<li>验证通过后进入主界面。左下角 ≡ 菜单 → Settings → General → Usage，确认是 Free plan，能看到每周额度和重置时间。</li>
+<li>同一页点 <strong>Redeem invite code</strong>，填好友给的邀请码。</li>
+</ol>
+<p><strong>顺序很重要</strong>：先把账号激活（过年龄验证、看到每周额度），再兑邀请码。</p>
+
+<h2 style="font-size:18px;color:#0F4C81;">二、坑一：IP 地区</h2>
+<p>用普通云服务器 / 机房 IP 打开 Muse，会直接提示 “isn't available in your country or region”，进 waitlist。换成机房代理也一样，<strong>必须是美国家宽（住宅）IP</strong>。我试过的方案：</p>
+<ul>
+<li><strong>Lexmount</strong>（云浏览器，带官方住宅代理）：免费流量很少（约 30MB），能过地区检测，但后面账号进了 waitlist，想买 Pro 时结账页又出问题，放弃。</li>
+<li><strong>Aluvia</strong>（代理服务）：美国、香港出口都报上游 503，用不了。另外注意用完代理要关掉，别忘了切回直连，不然其他网站会莫名报网络错误。</li>
+<li><strong>Bifrost</strong>：免费流量要绑 Telegram，我不想绑，没用。</li>
+<li><strong>Browserless 免费版 + 住宅代理（美国）</strong>：最后用这个成功了。连接参数里开 residential、国家 us、sticky 会话。</li>
+</ul>
+<p>Browserless 免费版的坑：</p>
+<ul>
+<li>每个会话<strong>最长 2 分钟</strong>，光登录就要 50 秒左右，所以要把流程拆成几段，每段做一步。</li>
+<li>每月约 1000 units，住宅代理很费，几轮就用完了。用完可以再开一个免费账号。</li>
+<li>把登录后的 cookie 保存下来，下一段会话直接带上，<strong>可以跳过邮箱验证码</strong>，省时间也省 units。</li>
+</ul>
+
+<h2 style="font-size:18px;color:#0F4C81;">三、坑二：Meta 账号风控</h2>
+<ul>
+<li><strong>生日默认是今年</strong>，不改直接提交会被判未成年拒掉，一定要改成成年日期。</li>
+<li>有的新邮箱建号时会被 Meta 风控直接拦，换一个邮箱再试就行（用邮箱的 +别名 就能得到新地址）。</li>
+<li><strong>验证码限流</strong>：10 分钟内要了大约 5 次登录码后，Meta 就不再发了。遇到这种情况等 40 分钟左右再试，平时尽量靠 cookie 免验证码。</li>
+</ul>
+
+<h2 style="font-size:18px;color:#0F4C81;">四、坑三：年龄验证（$1 绑卡）</h2>
+<p>两条路：</p>
+<ol>
+<li><strong>连 Instagram / Facebook</strong>：新注册的 Instagram 会强制要手机短信验证，我卡在这里放弃了。已有老号的可以优先走这条。</li>
+<li><strong>绑卡扣 $1</strong>：Muse 的表单是自己的输入框（卡号、MM/YY、CVV、国家、ZIP，没有姓名），通过 Meta Pay 扣 $1 预授权，5–7 个工作日退回。</li>
+</ol>
+<p>国内银联卡基本过不了。我的解法：</p>
+<ul>
+<li>申请一张<strong>海外虚拟 Visa 卡</strong>（我用的是 Roogoo 的「乐享卡」），需要做 KYC 实名认证，开卡时还要填手机号。</li>
+<li>充值用 USDT，最低大约 10 美元。我没有交易所账号（币安国际版在美国 IP 下注册不了），最后是找代充服务充进卡里的。</li>
+<li>Muse 表单里的 ZIP 填<strong>卡片的账单地址邮编</strong>（在卡详情页能看到），国家选 US。</li>
+<li>虚拟卡查看完整卡号要先过邮箱验证码，提前准备好。</li>
+</ul>
+<p>提交后页面跳回 Muse 首页，邮箱会收到 Meta 发来的 $1 扣款收据，就说明过了。</p>
+
+<h2 style="font-size:18px;color:#0F4C81;">五、每周额度与邀请码</h2>
+<ul>
+<li>Settings 入口在<strong>左下角 ≡ 菜单</strong>里；直接访问 /settings 是 404。</li>
+<li>Settings → General → Usage：显示 Free plan、本周已用百分比和重置日期（每周重置）。</li>
+<li>Redeem invite code 也在这一页。好友邀请码要在<strong>入驻后 48 小时内</strong>兑，成功后提示 “Congratulations! Your code redemption was successful”，双方各得 10 亿 Muse tokens。</li>
+<li><strong>别用 X 上随便贴的公开邀请码</strong>，多数已被用完，还白白浪费你唯一一次兑换机会。找认识的人要。</li>
+</ul>
+
+<h2 style="font-size:18px;color:#0F4C81;">六、清单</h2>
+<ul>
+<li>美国住宅 IP 浏览器环境（Browserless 免费版住宅代理可行）</li>
+<li>一个能收验证码的邮箱</li>
+<li>成年生日</li>
+<li>能过 $1 预授权的外卡（海外虚拟 Visa 可行）+ 卡的账单 ZIP</li>
+<li>一个好友的邀请码，48 小时内兑</li>
+</ul>
+<p>以后登录也一样：挂美国 IP，打开 muse.ai，邮箱收验证码登录即可。</p>
+</section></body></html>
