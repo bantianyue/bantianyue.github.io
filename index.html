@@ -2,11 +2,62 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=https://bantianyue.github.io/pretraining-notes/">
-<link rel="canonical" href="https://bantianyue.github.io/pretraining-notes/">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI圈的9527 · 预训练学习资料库</title>
+<style>
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;max-width:900px;margin:0 auto;padding:32px 20px 60px;color:#222;line-height:1.6}
+h1{font-size:26px;margin:0 0 4px}
+.sub{color:#666;font-size:15px;margin-bottom:28px}
+.sub a{color:#666}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;color:#888;font-weight:600;font-size:14px;border-bottom:2px solid #222;padding:8px 12px 8px 0}
+td{border-bottom:1px solid #eee;padding:12px 12px 12px 0;vertical-align:top}
+td a{color:#1a56db;text-decoration:none}
+td a:hover{text-decoration:underline}
+.en{color:#666;font-size:14px}
+.date{color:#888;font-size:14px;white-space:nowrap}
+.pager{margin-top:28px;text-align:center;font-size:15px}
+.pager a,.pager span{display:inline-block;min-width:34px;padding:6px 8px;margin:0 2px;border:1px solid #ddd;border-radius:6px;color:#333;text-decoration:none}
+.pager a:hover{border-color:#1a56db;color:#1a56db}
+.pager span.cur{background:#222;color:#fff;border-color:#222}
+.pager span.dis{color:#ccc}
+.note{margin-top:24px;color:#999;font-size:13px}
+@media(max-width:640px){td.date{white-space:normal}}
+</style>
 </head>
 <body>
-<p>正在前往<a href="https://bantianyue.github.io/pretraining-notes/">预训练学习资料库</a>……</p>
+<h1>AI圈的9527 · 预训练学习资料库</h1>
+<p class="sub">大模型预训练技术精读目录 · 共 <span id="total"></span> 篇 · <a href="https://bantianyue.github.io/pretraining-notes/">星级目录页</a></p>
+<table>
+<thead><tr><th style="width:45%">标题</th><th style="width:40%">英文标题</th><th style="width:15%">发表时间</th></tr></thead>
+<tbody id="rows"></tbody>
+</table>
+<div class="pager" id="pager"></div>
+<p class="note">发表时间为本站精读发布日期。中文原创文章无英文标题，英文标题栏为空。</p>
+<script>
+var DATA = [{"t": "Megatron-FSDP", "e": "Megatron-FSDP", "d": "2026-10-28", "u": "https://bantianyue.github.io/pretraining-notes/pages/megatron-fsdp.html"}, {"t": "DeepSpeed ZeRO 显存优化", "e": "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models", "d": "2026-10-27", "u": "https://bantianyue.github.io/pretraining-notes/pages/zero-memory-optimizations.html"}, {"t": "FinePhrase 合成数据手册", "e": "The Synthetic Data Playbook: Generating Trillions of the Finest Tokens", "d": "2026-10-26", "u": "https://bantianyue.github.io/pretraining-notes/pages/finephrase-synthetic-data-playbook.html"}, {"t": "Cerebras 万亿参数部署：59 块晶圆装下 Kimi K3", "e": "How we deploy Trillion-parameter frontier models on Cerebras", "d": "2026-10-26", "u": "https://bantianyue.github.io/pretraining-notes/pages/cerebras-trillion-parameter-deploy.html"}, {"t": "CUDA 启动队列：相同的 Transformer 层为何卡住", "e": "Understanding CUDA Launch Queues", "d": "2026-10-25", "u": "https://bantianyue.github.io/pretraining-notes/pages/cuda-launch-queues.html"}, {"t": "GPU 通信（一）：从 IPC 句柄到 NVSwitch 的跨进程共享全链路", "e": "GPU Communications - I", "d": "2026-10-25", "u": "https://bantianyue.github.io/pretraining-notes/pages/gpu-communications-1.html"}, {"t": "OCP 2026 协同设计：供电、液冷与网络必须同步扩展", "e": "OCP 2026: Co-designing an AI Cluster", "d": "2026-10-25", "u": "https://bantianyue.github.io/pretraining-notes/pages/ocp-2026-co-design.html"}, {"t": "Blackwell NUMA：单颗 GPU 里的两个局部性域", "e": "Blackwell Brings NUMA Back, Inside One GPU", "d": "2026-10-25", "u": "https://bantianyue.github.io/pretraining-notes/pages/blackwell-numa.html"}, {"t": "torchtitan 年度更新：TitanRL、FlexShard 与检查点换代", "e": "TorchTitan updates: New SOTA models, Performance at scale, and TitanRL", "d": "2026-10-22", "u": "https://bantianyue.github.io/pretraining-notes/pages/torchtitan-update-titanrl.html"}, {"t": "在线 Softmax：FlashAttention 分块计算的数学地基", "e": "FlashAttention — Online Softmax", "d": "2026-10-22", "u": "https://bantianyue.github.io/pretraining-notes/pages/online-softmax-flashattention.html"}, {"t": "让 CUDA 不再吓人：从 H100 硬件到 FlashAttention 的一条学习线", "e": "Making CUDA less overwhelming", "d": "2026-10-22", "u": "https://bantianyue.github.io/pretraining-notes/pages/making-cuda-less-overwhelming.html"}, {"t": "Muse Glimmer 30B 端侧智能体", "e": "Muse Glimmer 30B: An On-Device Agentic Model", "d": "2026-10-21", "u": "https://bantianyue.github.io/pretraining-notes/pages/muse-glimmer-30b.html"}, {"t": "vLLM 自适应验证：无置信度头时的在线接受率估计器", "e": "Adaptive Verification Without a Confidence Head", "d": "2026-10-15", "u": "https://bantianyue.github.io/pretraining-notes/pages/vllm-adaptive-verification-online-estimator.html"}, {"t": "前沿模型训练方法论", "e": "Frontier Model Training Methodologies", "d": "2026-10-14", "u": "https://bantianyue.github.io/pretraining-notes/pages/frontier-training-methodology.html"}, {"t": "HINT4：无 FP4 的 GPU 上跑硬件无关 NVFP4", "e": "Towards a hardware-invariant NVFP4 for GPUs without FP4: progress report 1", "d": "2026-10-14", "u": "https://bantianyue.github.io/pretraining-notes/pages/hint4-hardware-invariant-nvfp4.html"}, {"t": "Anthropic 提示缓存", "e": "What is Prompt Caching in LLMs?", "d": "2026-10-14", "u": "https://bantianyue.github.io/pretraining-notes/pages/prompt-caching-anthropic.html"}, {"t": "Modern GPU 编程", "e": "Modern GPU Programming for MLSys", "d": "2026-10-09", "u": "https://bantianyue.github.io/pretraining-notes/pages/modern-gpu-programming.html"}, {"t": "Tensor Core MMA Swizzle Layout（中文版）", "e": "Tensor Core MMA Swizzle Layout", "d": "2026-10-09", "u": "https://yang-yifan.github.io/blogs/mma_swizzle/mma_swizzle_cn.html"}, {"t": "Aleph Alpha 分层预训练", "e": "Scaling Pre-Training in Practice: A Hierarchical Approach", "d": "2026-10-08", "u": "https://bantianyue.github.io/pretraining-notes/pages/aleph-alpha-scaling-pretraining.html"}, {"t": "Aleph Alpha Kolibri 技术报告", "e": "Kolibri: A Sovereign European Model on the Pareto Frontier", "d": "2026-10-08", "u": "https://bantianyue.github.io/pretraining-notes/pages/aleph-alpha-kolibri-tech-report.html"}, {"t": "Agentic GPU 编程", "e": "Agentic GPU Programming for MLSys", "d": "2026-10-01", "u": "https://bantianyue.github.io/pretraining-notes/pages/agentic-gpu-programming.html"}, {"t": "如何不造出另一个 Megatron（一）：流水线并行是怎么污染整个训练框架的", "e": "", "d": "2026-09-30", "u": "https://abcdabcd987.com/2026/09/07/no-pp/"}, {"t": "如何不造出另一个 Megatron（二）：极简并行方案", "e": "", "d": "2026-09-30", "u": "https://abcdabcd987.com/2026/09/08/minimalism-parallelism/"}, {"t": "分布式训练（MLSys Book）", "e": "Machine Learning Systems at Scale — Distributed Training", "d": "2026-09-30", "u": "https://bantianyue.github.io/pretraining-notes/pages/mlsys-distributed-training.html"}, {"t": "vLLM 上下文并行部署", "e": "Context Parallel Deployment", "d": "2026-09-30", "u": "https://bantianyue.github.io/pretraining-notes/pages/vllm-context-parallel.html"}, {"t": "Modular Kernel 优化", "e": "Kernel Optimization", "d": "2026-09-30", "u": "https://bantianyue.github.io/pretraining-notes/pages/modular-kernel-optimization.html"}, {"t": "vLLM 生产环境监控指标", "e": "Production Metrics", "d": "2026-09-30", "u": "https://bantianyue.github.io/pretraining-notes/pages/vllm-production-metrics.html"}, {"t": "GEMM CUDA 优化", "e": "How to make your models fast — GEMM", "d": "2026-09-30", "u": "https://bantianyue.github.io/pretraining-notes/pages/gemm-cuda.html"}];
+var PER = 10, PAGES = Math.ceil(DATA.length / PER);
+document.getElementById('total').textContent = DATA.length;
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function page(){var m = location.hash.match(/page=(\d+)/);var p = m ? parseInt(m[1],10) : 1;if(!p || p < 1) p = 1;if(p > PAGES) p = PAGES;return p;}
+function render(){
+  var p = page();
+  var rows = DATA.slice((p-1)*PER, p*PER).map(function(a){
+    return '<tr><td><a href="' + esc(a.u) + '">' + esc(a.t) + '</a></td><td class="en">' + esc(a.e || '') + '</td><td class="date">' + esc(a.d) + '</td></tr>';
+  }).join('');
+  document.getElementById('rows').innerHTML = rows;
+  var pg = '';
+  pg += p > 1 ? '<a href="#page=' + (p-1) + '">上一页</a>' : '<span class="dis">上一页</span>';
+  for(var i = 1; i <= PAGES; i++){
+    pg += i === p ? '<span class="cur">' + i + '</span>' : '<a href="#page=' + i + '">' + i + '</a>';
+  }
+  pg += p < PAGES ? '<a href="#page=' + (p+1) + '">下一页</a>' : '<span class="dis">下一页</span>';
+  pg += '<div style="margin-top:10px;color:#888;font-size:13px">第 ' + p + ' / ' + PAGES + ' 页</div>';
+  document.getElementById('pager').innerHTML = pg;
+  window.scrollTo(0, 0);
+}
+window.addEventListener('hashchange', render);
+render();
+</script>
 </body>
 </html>
