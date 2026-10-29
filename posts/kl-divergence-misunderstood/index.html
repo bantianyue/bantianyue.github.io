@@ -1,0 +1,115 @@
+<section class="container" style="font-family: -apple-system-font,BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB , Microsoft YaHei UI , Microsoft YaHei ,Arial,sans-serif;font-size: 14px;line-height: 1.75;text-align: left;">
+<style>
+/* 传送门统一样式（add-portal.py动态注入时引用此class；真身在内联style，class仅兜底） */
+.portal-title { font-size:12px; color:#1a6ba0; font-weight:bold; }
+.portal-links { font-size:12px; color:#0F4C81; }
+.portal-links a { color:#0F4C81; text-decoration:none; }
+</style>
+<section style="background:#e8f4fd;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:18px;margin-top:0 !important;">
+<section style="text-align:center;margin-bottom:10px;">
+<strong style="font-weight:bold;font-size:16px;color:#1a6ba0;">要点速览</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">可读的刻度</strong>：KLD没有直观刻度，EAR可以直接读：GPTQ 4-bit Qwen3-8B的KLD 0.044相当于每17个token选错1个，RTN 8-bit约1/109，GPTQ 3-bit约1/8。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">六个维度</strong>：同一量化模型的KLD随测量文本、校准数据、评估调优、上下文长度、MoE专家路由与模型本身而变，幅度从39%到50倍以上。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">替代做法</strong>：分布指标须在基模型自生成文本、多类文本、隔离校准数据下测并公开全部设置；再配不饱和基准、私有基准与基模型自身噪声。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">围绕GSQ-RCO模型，常被问到一个问题：为何不报告KL散度（KLD）？是不是零样本结果看起来比KLD好看，或者算出KLD不好所以藏起来？这个问题在763B的DeepSeek-V4.1-Flash-GSQ-RCO发布后尤其多，回答来自一篇由Reddit帖子扩展而来的长文。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">简短版本：如果对任务基准心存怀疑，对KLD更应该怀疑。KLD数字要容易得多，同一模型在通常不报告的选择下能得到很不一样的KLD。不少人把KLD当成能区分所有量化模型并按质量排名的神圣指标：它做不到。</p>
+
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">KLD到底测什么</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">同一文本同时喂给基模型与量化模型，比较二者在每个token处由logits得到的概率分布，KLD度量这两个分布的差异，再对全部token取平均。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig01.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图1：单个token上的KL散度与EAR：接续“The capital of France is”，原模型与量化模型的下一个token分布；KLD 0.021，EAR 0.91。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">单token示例里KLD为0.021，单看这个数字几乎说明不了什么；EAR为0.91，意味着量化模型至少9%的情况下选出与原模型不同的token。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">EAR恰好就是把量化模型当作推测解码草稿模型时的接受率，来自无损量化论文《Statistically-Lossless Quantization of Large Language Models》。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">一个能读懂的数字</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">KLD没有直观刻度：0.044算好还是坏，很难说；EAR可以直接读。在自身答案上，GPTQ 4-bit Qwen3-8B的KLD为0.044，换算成EAR约每17个token选错1个；RTN 8-bit约每109个选错1个；GPTQ 3-bit约每8个选错1个。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">EAR更容易读，但测量方式与KLD相同：下面六个维度同样影响它。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">KLD能完全不同的六个维度</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">同一量化模型的KLD可能截然不同，取决于：</p>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">测量的文本</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">量化所用的校准数据</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">在评估数据上的调优</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">评估设置，如上下文长度</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">MoE模型里文本恰好用到的专家</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">模型本身：同样的KLD让不同模型付出的精度代价大不相同</li></ul>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">每个维度都做了实验，结果如下。</p>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">1. 测量的文本</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">同一批量化、不同文本：排名翻转。最先可能出错的地方，是随手抓些随机文本（比如一堆维基百科文章）算KLD。但这不一定代表模型推理时真正看到的东西：生成过程中，上下文里越来越大的部分是模型自己生成的token，喂随机文本无法复现这一点。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">在Qwen3-8B上用五个仅校准数据不同的GPTQ 4-bit量化验证：按维基百科KLD排名，维基百科校准的排第一；按模型自身答案的KLD排名，它掉到五名中的第四。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">更合理的做法：用基模型自己生成数据集，再在生成的token上算KLD，提示词token权重给零。</p>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">2. 校准数据</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">只改校准数据，KLD移动1.8倍。量化方法常依赖校准数据；在同一数据上算KLD，数字会比别人好看得多。即使声称用了留出数据集，KLD依然不可信：校准集与评估集可能同源或分布高度相似。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">同一模型、同一4-bit方法、同一维基百科测试文本，只改校准数据：KLD从0.048变到0.087。维基百科校准的量化在维基百科文本上胜出；数学校准的在数学上胜出（0.021），在维基百科上垫底。每个量化在自己校准的那类文本上看起来最好。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig02.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图2：只改校准数据，KLD移动1.8倍：Qwen3-8B GPTQ 4-bit，同一模型、同一方法、同一维基百科测试文本，维基百科校准0.048，数学标准0.087。</figcaption></figure>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">3. 在评估数据上调优</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">3-bit模型几分钟就能拿到4-bit模型的KLD。KLD极其容易操纵，尤其数字来自模型制作者自身时：有人甚至会在同一数据上端到端微调量化缩放参数，模型突然在KLD上击败两倍于自己的模型，而在数据集之外几乎无法泛化。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">实验验证：取3-bit GPTQ Qwen3-8B，只训练量化缩放参数、以WikiText-2测试集上的KLD为目标，仍是纯3-bit模型。测试集KLD从0.205降到0.048，与4-bit模型持平；留出维基百科文本KLD为0.149，比4-bit差三倍；GSM8K调优后85.6%、调优前86.0%，4-bit模型为90.8%。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">4-bit模型的KLD，3-bit模型的精度，单卡几分钟完成。</p>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">4. 评估设置</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">只改上下文长度，KLD移动39%。即使没人动手脚，不同人的KLD数字也不可比：每次KLD评估都有旋钮：哪段文本、多少token、参考模型用BF16还是Q8、每个token给多少上下文。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">只看其中一个旋钮，上下文长度：同一量化、同一维基百科文本，128 token上下文时KLD为0.079，2048 token时为0.057，39%的波动来自多数人从不报告的设置。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig03.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图3：同一量化、同一文本，只改上下文长度：128 token时KLD 0.079，2048 token时0.057，波动39%。</figcaption></figure>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">5. 文本用到的专家(MoE)</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">删掉25%的专家，合适文本上的KLD几乎注意不到。混合专家模型让问题更严重：每个token只经过少数专家，KLD只度量测试文本实际路由到的专家；某个专家在数据上从不触发，量化得再差甚至删掉，KLD都不会发现。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">实验：取Qwen3-30B-A3B，删掉25%的专家，保留在数学文本上路由器最常用的那些。数学文本上，剪枝模型的KLD为0.036，与4-bit量化的0.031差不多；GSM8K几乎不动（92.8%，BF16为93.2%）。多语言文本上，KLD为2.51，比4-bit差50倍以上，多语言基准Belebele从96.5%掉到84.2%。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig04.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图4：删掉25%专家，数学文本上的KLD几乎不动：数学文本4-bit为0.031、剪枝为0.036，多语言文本4-bit为0.047、剪枝为2.51。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">用德语问疫苗如何训练免疫系统，模型回答：“Es gibt no such thing as 'Impfung' in the context of training the immune system. It seems there might be a typo or misunderstanding in your question.”</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">改按维基百科挑选专家，剪枝模型在维基百科KLD上甚至击败4-bit（0.028对0.052）。</p>
+<h3 class="h3" data-heading="true" style="padding-left: 8px;border-left: 3px solid #0F4C81;margin: 2em 8px 0.75em 0;color: #3f3f3f;font-weight: bold;line-height: 1.2;">6. 模型本身</h3>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">即使文本与设置完全相同，KLD数字也无法从一个模型搬到另一个模型。SLQ论文给0.6B到70B的七个模型加权重噪声，追踪平均零样本精度随KLD的变化：</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Llama-3.2-1B在KLD约0.014时损失1%精度；Llama-3.3-70B到约0.23才损失1%，高17倍。KLD为0.1时，1B模型损失11%精度，70B模型分文不损。对一个模型合适的KLD，对另一个可能是坏的。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig05.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图5：同一KLD、不同模型损伤大不相同：KLD为0.1时，1B模型精度损失11%，70B模型无损失；1B模型在KLD约0.014即损失1%，70B模型要到约0.23。</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">KLD到底还有没有意义</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">要看情况。KLD度量的是量化模型在非常有限的数据集上偏离基模型的程度；更高的KLD是否意味着量化模型会在实际任务上失败？当然不是。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">实验里两个方向都出过问题：测试集上调优的3-bit模型拿到了4-bit模型的KLD，却只有3-bit模型的精度；按维基百科剪枝的MoE在代码、数学与多语言文本上的KLD是4-bit的13到26倍，GSM8K与Belebele得分却与4-bit差不多。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">KLD还只是平均值：在模型自身答案上，1%的token约占KLD总量的四分之一。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">基准分数确实可以操纵，但对量化模型制作者而言，操纵基准要难得多：往往需要大量硬件与额外算力，而把KLD做得好看可以便宜得离谱。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">替代做法</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">所以不依赖KLD。KLD不是唯一的陷阱：饱和的零样本基准也不是答案。在HellaSwag、PIQA、ARC-Easy这类任务上，任何合理的4-bit量化都落在BF16模型的噪声范围内，无法区分量化好坏。应该看的是：</p>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">分布指标，但要测得正确：在基模型自己生成的文本上测EAR（实在要用KLD也可以），只给生成token打分；与校准数据隔离；覆盖不止一种文本：代码、数学、其他语言；同时公开全部设置：哪段文本、多少token、上下文长度、参考模型。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">不饱和的基准：模型必须自己生成答案的生成式任务：带推理的数学（AIME、MATH）、MMLU-Pro、指令遵循（IFEval）、代码（LiveCodeBench），用模型设计用途的采样设置运行。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">私有基准：把日常任务存下来当基准。做起来不容易，给不同模型打分也有挑战，但只需做一次；此后可以拿它比较任何量化模型。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">基模型自身的噪声：BF16模型用不同随机种子跑几次；量化落在该波动范围内，就无法在该任务上把它与BF16区分开；落在下方，才是真实损失。</li></ul>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">请停止把KLD当成量化模型的通用排行榜：它是有用的诊断工具，不是模型好坏的度量。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">测量方法</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">模型：Qwen3-8B与Qwen3-30B-A3B-Instruct-2507，对照各自BF16权重。量化：仅权重量化，组大小128、非对称；GPTQ用128条2048 token序列校准；MoE的4-bit基线用最近取整（RTN）。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">KLD：每个token在完整词表上计算；Qwen3-8B每类文本131k token、MoE为65k（自身答案：生成token分别为181k与48k）。文本类型：维基百科（WikiText-2）、代码（evol-codealpaca）、数学（MATH）、多语言（8种语言的FLORES段落），以及模型对128个提示词的自身答案。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">MoE剪枝：按262k token数学文本上的路由器使用量给每层专家排序，移除使用量最低的25%。缩放调优：只训练每组量化缩放参数，在64条WikiText-2测试序列上以KLD为损失训练4轮。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">基准：GSM8K（250题，贪心，无思考）与Belebele（8种语言400题，段落未在别处用过）。第六维度的按模型曲线来自SLQ论文的权重噪声扫描（图1b），数值从图上读出。</p>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="background:#f5f0eb;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:16px;">
+<section style="text-align:center;margin-bottom:8px;">
+<strong style="font-weight:bold;font-size:15px;color:#8b6f4c;">结语</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">KLD的六个维度指向同一个教训：脱离测量条件谈KLD数字没有意义。文本、校准、调优、上下文、专家路由、模型本身，每一项都能把数字推到另一个位置，而这些选择通常不会出现在报告里；单看KLD排名量化模型，排出来的是测量方式，不是模型质量。<br  /><br  />可信的替代做法并不复杂：分布指标要在自生成、多类型、隔离校准的数据上测并公开设置；基准要选不饱和的生成式任务并配私有任务与基模型噪声对照。做到这几条，KLD可以退回它应有的位置：诊断工具，而非排行榜。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="text-align:center;">
+<span class="portal-title" style="font-size:12px;color:#1a6ba0;font-weight:bold;">【传送门】</span>
+<section style="text-align:left;display:inline-block;font-size:12px;color:#0F4C81;" class="portal-links">
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/FaWYxLzYr36GWDVOuvtCoQ" target="_blank" data-linktype="2">Kimi K3技术解析之AttnRes: 打破Transformer沿用十年的残差各层等权的假设</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/YHmkt8EHFGm-HeflWCsB2w" target="_blank" data-linktype="2">英伟达Kernel Agent: 编译器与算子调优Agent的协同设计</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/s0Ovn3_tnbbl9jxfAC3WLg" target="_blank" data-linktype="2">阿里Sparse Attention on CXL替代RDMA做KV Cache解耦 推理2.1×吞吐, 9.7×TTFT</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/tG1HTi6K8Lt-5pD-DHypbQ" target="_blank" data-linktype="2">MLP就是Hebbian记忆: 无需训练，往Transformer块注入事实知识的构造方法</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/2NmM9xDA-1eKlFs_moi7Qw" target="_blank" data-linktype="2">把KVCache变成可训练记忆：Context Tuning让LLM免权重微调</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/3btXHAVd8_x5CM5CWETc2g" target="_blank" data-linktype="2">Agent卷向AI Infra: SGLang团队用硬核Agent优化框架和CUDA Kernal性能</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/HPaDwcT_4Rw5ty7LwDG4Ng" target="_blank" data-linktype="2">Torch Profiler在Trace里分析性能瓶颈: 剖析SGLang LLM推理</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/CYCs6dgCsKhNlfDHb7trXA" target="_blank" data-linktype="2">KVCache缝合术: 突破前缀匹配天花板,首Token快14倍 多文档快2~4倍</a><br>
+</section>
+</section>
+
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;"><span style="font-size:12px;color:#888888;font-family:'Courier New',monospace;">参考：https://x.com/mhelcig/status/2115515450356539696</span></p>
+</section>

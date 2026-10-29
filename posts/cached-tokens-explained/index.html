@@ -1,0 +1,113 @@
+<section class="container" style="font-family: -apple-system-font,BlinkMacSystemFont, Helvetica Neue, PingFang SC, Hiragino Sans GB , Microsoft YaHei UI , Microsoft YaHei ,Arial,sans-serif;font-size: 14px;line-height: 1.75;text-align: left;">
+<style>
+/* 传送门统一样式（add-portal.py动态注入时引用此class；真身在内联style，class仅兜底） */
+.portal-title { font-size:12px; color:#1a6ba0; font-weight:bold; }
+.portal-links { font-size:12px; color:#0F4C81; }
+.portal-links a { color:#0F4C81; text-decoration:none; }
+</style>
+<section style="background:#e8f4fd;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:18px;margin-top:0 !important;">
+<section style="text-align:center;margin-bottom:10px;">
+<strong style="font-weight:bold;font-size:16px;color:#1a6ba0;">要点速览</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">机制</strong>：前缀缓存是精确前缀匹配：从第一个token起，首个不同处即停止复用；缓存按固定块存储，命中与否按每次请求算。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">算账</strong>：DeepSeek V4.1 Flash 1017上，缓存输入价为未缓存价的2%；20轮会话的示意算例里，输入成本从0.093美元降到0.00921美元，约10倍。<br  /><br  />-<strong style="color:#0F4C81;font-weight:bold;font-size:inherit;">做法</strong>：稳定内容放前、易变内容放后，时间戳不出系统提示词，工具排序固定、只追加不重写；同时记住缓存是尽力而为，按标价做预算。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Agent每轮都在为同一个提示词付费。Agent循环的每次调用都会重发系统提示词、工具定义与全部历史，模型上一轮刚读过其中绝大部分。前缀缓存让服务端复用这部分工作：命中时，重复部分按低得多的价格计费。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Nebius Token Factory最近新增了缓存token。以DeepSeek V4.1 Flash 1017为例，未缓存输入每百万token 0.30美元，缓存输入每百万token 0.006美元，是标价的2%。真正的问题不是缓存值不值得，而是提示词里实际命中多少，以及自己的代码里什么在破坏命中。</p>
+
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">Agent循环为何每轮重发全部内容</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">LLM API是无状态的：模型不记得上一次请求。于是每轮里Agent都会把整段对话再发一次。一轮典型的Agent调用由四部分组成：系统提示词（指令、人设、规则）；工具定义（常为数千token的JSON Schema）；此前的消息、工具调用与工具结果；唯一的新内容：一条用户消息或最新工具结果。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig01.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图1：每轮都重发全部内容：Agent循环里每轮提示词规模递增，新增部分很小，重复前缀持续增长。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">前三部分与上一轮发的内容完全相同，只有第四部分是新的；而且重复部分每轮都在增长：第10轮背着第1到第9轮的全部内容。长循环里，提示词token的大多数是模型已经见过的前缀。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">没有缓存时，服务端每次调用都从头处理全部内容；已经在几秒前算过的token，仍按完整输入价收费。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">前缀缓存如何工作</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">模型生成任何内容之前，先把整个提示词跑一遍预填充（prefill），产出每个token的注意力键与值，通常称为KV缓存。读取长提示词时，昂贵的部分正是这一步计算；而且它是确定性的：同样的token、同样的顺序，得到同样的结果。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig02.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图2：前缀匹配在首个不同处停止：前缀不变时，系统提示词、工具与历史全部命中，只有新消息按全价；系统提示词里一个字符变化（如时间戳14:02变成14:03），其后全部内容都要重算并按全价计费。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">推理引擎因此会把最近的KV状态留下来。新请求进来时，引擎检查提示词开头是否匹配最近处理过的某个提示词；匹配就复用已存状态，只计算剩余部分。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">三个细节决定后面的一切：第一，精确前缀匹配。匹配从第一个token开始，到首个不同的token为止；此后的一切都要重算，即使与上次完全相同。第二，按块存储。引擎按固定大小的块缓存；文档说缓存token数通常向下取整到块边界，所以不会正好等于重复文本的长度。第三，按请求算命中或未命中。命中意味着提示词的某个前缀被复用；未命中意味着一个都没复用，全部提示词token按输入价计费。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;"><strong>缓存里存的是算好的状态，不是文本：在Token Factory上，它无法还原成文本，也不会通过任何API暴露。</strong></p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">Nebius Token Factory的做法</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Token Factory上的缓存是隐式的：没有缓存键、无需主动开启、无需改代码；同一前缀再发一次就可能命中。Serverless与专用端点（Dedicated Endpoints）都支持；价格差异只体现在Serverless上：那里缓存token按各模型的缓存输入价计费。专用端点按GPU小时计费，账单不变，得到的是吞吐与延迟。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig03.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图3：Token Factory如何对缓存命中计费：3108个提示词token的请求，账单拆为输入36、缓存输入3072、输出62；Serverless按缓存输入价计费更便宜，专用端点按GPU小时计费、账单不变但更快、吞吐更高；没有可设置的TTL，未用前缀几分钟内就可能消失。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">计费把每个提示词一分为二，每个提示词token只计一次：提示词token = 输入（未缓存）token + 缓存输入token。缓存输入在账单与用量报告里是单独一行。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">没有文档化的TTL：文档说未使用的前缀“可能仅几分钟后就被移除”，负载下随时可能被逐出，频繁复用的前缀留存更久；用户自己无法设置TTL。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">用真实价格算账</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">先看文档里的例子：3108个提示词token，其中3072个缓存。计费为36个输入token加3072个缓存输入token，再加输出。DeepSeek V4.1 Flash 1017的价格为输入每百万token 0.30美元、缓存输入0.006美元、输出1.20美元，只算输入侧：</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig04.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图4：20轮会话的输入侧（示意数字、最佳情况）：发送310000 token，其中25000新增、285000为重复前缀命中；无缓存0.093美元，有缓存0.0092美元，输入侧便宜约10倍，输出两种情况相同。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">无缓存：3108 × 0.30 / 100万 = 0.000932美元；有缓存：(36 × 0.30 / 100万) + (3072 × 0.006 / 100万) = 0.0000108 + 0.0000184 = 0.0000292美元。输入侧便宜约32倍；输出计费两种情况相同。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">单次请求只是小钱，Agent循环里才会累积。下面是示意token数的算例（不是实测运行）：系统提示词加工具定义6000 token；每轮新增1000 token（用户消息、工具调用、工具结果）；每会话20轮。第n轮发送6000 + 1000 × (n - 1)个token，20轮合计：20 × 6000 + 1000 × (0 + 1 + … + 19) = 120000 + 190000 = 310000个提示词token。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">无缓存时全部按0.30美元/百万token计费：310000 × 0.30 / 100万 = 每会话0.093美元。最佳缓存情况下：第1轮全未命中（6000未缓存）；从第2轮起，除新增1000 token外全部命中：未缓存6000 + 19 × 1000 = 25000 token × 0.30 / 100万 = 0.0075美元；缓存310000 - 25000 = 285000 token × 0.006 / 100万 = 0.00171美元；合计每会话0.00921美元。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">输入侧便宜约10倍；每天1000个会话，93美元变成9.21美元。两点诚实说明：这是最佳情况，块取整与逐出会让真实缓存占比更低；输出token不在算例里，因为缓存不改变输出计费。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">折扣因模型而异</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Token Factory上缓存价按模型设定，价差很大。以下为模型目录里的部分价格（每百万token，2026年10月28日读取）：</p>
+<section style="overflow-x:auto;-webkit-overflow-scrolling:touch;max-width:100%;"><table class="preview-table" style="color: #3f3f3f;margin: 1em 4px;"><thead style="font-weight: bold;color: #3f3f3f;"><tr><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">模型</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">输入</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">缓存输入</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">输出</th><th class="th" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;background: rgba(0, 0, 0, 0.05);">缓存占输入</th></tr></thead><tbody><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DeepSeek V4.1 Flash 1017</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.30</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.006</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$1.20</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">2%</td></tr><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DeepSeek V4.1 Flash</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.30</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.01</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$1.20</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">3%</td></tr><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">MiniMax M3.1 Flash</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.15</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.015</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.60</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">10%</td></tr><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">DeepSeek V4 Pro</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.75</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.14</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$3.50</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">8%</td></tr><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">Muse Spark Open</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$1.25</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.15</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$4.25</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">12%</td></tr><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">Kimi K2.6</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.95</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.16</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$4.00</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">17%</td></tr><tr class="tr"><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">Gemma 3 27B</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.10</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.04</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">$0.30</td><td class="td" style="border: 1px solid #dfdfdf;padding: 0.25em 0.5em;color: #3f3f3f;word-break: keep-all;">40%</td></tr></tbody></table></section>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">对Agent循环而言，缓存列要和输入列一样认真看：如果提示词的90%是重复前缀，缓存价就是输入账单的大头。没有缓存价的模型，无论命中与否，全部提示词token都按常规输入价计费。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig05.png"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图5：部分模型的输入、缓存输入与输出价格对照（每百万token）：DeepSeek V4.1 Flash 1017缓存价为输入价的2%，Gemma 3 27B为40%，价差很大。</figcaption></figure>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig06.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图6：模型目录里的精选模型卡片：MiniMax-M3.1-Flash、DeepSeek V4.1 Flash 1017与Reflection Beam 1.0，分别标注每百万token的输入、缓存与输出价。</figcaption></figure>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">让提示词命中缓存的写法</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">因为是精确前缀匹配，任务表述起来很简单：让提示词开头尽可能久地保持字节一致。具体做法：</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig07.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图7：保持前缀一致的五种做法：顺序（静态在前、易变在后，不把时间戳放顶部）、工具（排序一次、同一JSON，不逐轮重排）、历史（追加到末尾，不重写或裁剪旧轮次）、时机（请求尽量靠近，不间隔数小时）、模型（一次对话一个模型，不中途切换）。</figcaption></figure>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">稳定内容在前、易变内容在后：系统提示词、工具定义、示例与参考文档放顶部，最新的用户消息放底部。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">时间戳不要进系统提示词：这是最常见的缓存杀手。顶部的时间戳、请求ID或用户名每次调用都会变，其后的一切永远无法命中。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">不要重排或过滤工具：用字典构建的工具、每轮变化的“仅相关工具”过滤、不稳定键顺序的JSON都会改变前缀。排序一次，确定性序列化。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">只追加、不重写：新消息加到末尾。原地摘要旧轮次、裁剪早期工具结果、在顶部附近改动记忆，都会让改动之后的一切失效。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">相关请求尽量靠近发送：缓存条目会随时间被逐出。每几小时跑一次的定时任务大概率冷启动；缓存是在会话内省钱，不是在一天内省钱。</li></ul>
+<ul style="margin: 0.5em 0;padding-left: 1.6em;color: #3f3f3f;"><li style="margin: 0.4em 0;">一次对话只用一个模型：缓存不在模型间共享。换模型、换对话模板或分词参数，都会改变有效前缀；每条消息切换模型的路由每次都从零开始。</li></ul>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">从API读取缓存命中</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">每次响应都会在usage对象里报告缓存token；prompt_tokens始终是总数，已包含缓存token。Chat Completions与Completions在usage.prompt_tokens_details.cached_tokens里返回；Responses API在usage.input_tokens_details.cached_tokens里返回。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Token Factory兼容OpenAI接口，标准OpenAI SDK换个base URL就能用。流式传输时设置stream_options的include_usage为True：并非所有模型在流式模式下默认返回usage，没有它，即使token仍在计费，也可能看不到缓存数；usage随最后一个chunk到达。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">每轮都记这一行：一轮一行，足以看清循环在哪里漏损。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">诚实的一面:尽力而为</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">这是多数缓存文章跳过的权衡。Token Factory对缓存不提供SLA：不保证命中、不保证命中率、不保证折扣、不保证前缀留存时间。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig08.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图8：缓存是尽力而为：无SLA，不保证命中、命中率、折扣或留存时间；同一请求发两次可能一次命中3072、一次为0，两者都合法；Serverless缓存按模型共享、不是隔离边界，专用端点按客户隔离；按标价做预算，把命中当作额外收益；Embeddings、rerank、图像、批量、缓存键、TTL与钉住提示词均不在覆盖范围内，零数据保留依然成立。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">零是合法答案：重复请求也可能返回cached_tokens为0，逐出、换了副本或模型更新都可能导致；这不是错误。反过来，首次请求也可能出现命中：如果它与别的流量共享对话模板或前缀，全新对话也可能看到缓存token。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Serverless缓存按模型共享：只要同一模型最近收到过相同起始内容就能命中，与组织或API密钥无关。命中不会透露先前请求是谁发的、其余内容是什么；但文档明确说明：不要把缓存当作隔离边界，也不要把机密放在提示词开头。专用端点按客户隔离缓存。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">零数据保留（ZDR）下依然成立：缓存工作方式相同，提示词与响应不会被存储或记录。不在覆盖范围内：Embeddings、rerank与图像API不报告也不计费缓存token；批量推理不在覆盖范围内；无法设置缓存键、TTL或把某个提示词钉在缓存里；文档提到的prompt_cache_key只是路由到持有缓存的服务器的提示，不是访问密钥。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">规则是：为缓存命中做设计，但不要把它写进定价模型。按标价做预算，把每次命中当作实测到的额外收益。</p>
+<h2 class="h2" data-heading="true" style="display: table;padding: 0 0.2em;margin: 4em auto 2em;color: #fff;background: #0F4C81;font-weight: bold;text-align: center;">其他厂商的做法</h2>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">思路处处相同，控制手段不同。OpenAI自动缓存，命中报告在同一个prompt_tokens_details.cached_tokens字段；文档列出GPT-5模型最小可缓存提示词长度为1024 token，内存条目通常在5到10分钟不活跃后失效，另有最长24小时的延长保留选项。</p>
+<figure style="margin: 1.5em auto;text-align: center;">
+<img style="display: block;width: 100%;margin: 0 auto;" src="fig09.jpg"><figcaption style="font-size:12px;color:rgb(153,153,153);text-align:center;display:block;margin-top:0;">图9：三家厂商的前缀缓存对照：OpenAI自动开启、可控保留与路由键；Anthropic用cache_control标注断点、5分钟或1小时存活；Token Factory隐式开启、无需改代码、无写入溢价、按模型定缓存价、存活时间不固定。</figcaption></figure>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Anthropic要求用cache_control标出要缓存的内容，可以是一个顶层字段，也可以在块上显式设置断点；缓存按工具、系统、消息的顺序覆盖；默认存活5分钟，每次使用免费刷新，另有1小时选项；5分钟TTL的缓存写入价为基础输入价的1.25倍，多数模型缓存读取为0.1倍。</p>
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;">Token Factory最接近OpenAI模式：隐式、无写入溢价、同一响应字段。区别是用户什么都选不了；好处是不用改任何代码就能开始获得命中。</p>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="background:#f5f0eb;padding:14px 16px 10px 16px;border-radius:6px;margin-bottom:16px;">
+<section style="text-align:center;margin-bottom:8px;">
+<strong style="font-weight:bold;font-size:15px;color:#8b6f4c;">结语</strong>
+</section>
+<section style="font-size:14px;color:#3f3f3f;line-height:1.75;">这份清单做起来枯燥，但在DeepSeek V4.1 Flash 1017这类模型上，它决定了提示词的大头是按2%付费还是按100%付费：稳定内容在前、易变内容在后，时间戳不出系统提示词，工具排序固定、只追加不重写，相关请求靠近发送，一次对话一个模型。<br  /><br  />最便宜的token，是模型已经读过的那个。按标价做预算，把命中当作实测收益，缓存才能从账单惊喜变成可复用的工程习惯。</section>
+</section>
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<section style="text-align:center;">
+<span class="portal-title" style="font-size:12px;color:#1a6ba0;font-weight:bold;">【传送门】</span>
+<section style="text-align:left;display:inline-block;font-size:12px;color:#0F4C81;" class="portal-links">
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/4aEYa-5J2Ir82V_1_9anDA" target="_blank" data-linktype="2">AI芯片架构全景: 从NVIDIA到Groq的六条设计路线</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/42s6fk-xdo23L-vtLj6Q8Q" target="_blank" data-linktype="2">vLLM+Mooncake: 把agentic前缀复用从1.7%拉到92.2%</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/WrzegA1sALzJmjvE_hDKeg" target="_blank" data-linktype="2">TokenSpeed-Kernel：把推理内核做成一等公民</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/s0Ovn3_tnbbl9jxfAC3WLg" target="_blank" data-linktype="2">阿里Sparse Attention on CXL替代RDMA做KV Cache解耦 推理2.1×吞吐, 9.7×TTFT</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/kT5nIGLJDYyLRmnTceUqVg" target="_blank" data-linktype="2">Kimi K3技术详解之KDA: 线性注意力如何精准编辑被压缩的记忆</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/FaWYxLzYr36GWDVOuvtCoQ" target="_blank" data-linktype="2">Kimi K3技术解析之AttnRes: 打破Transformer沿用十年的残差各层等权的假设</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/nWrqMnkObaZI2tx6VtnpSA" target="_blank" data-linktype="2">Kimi K3技术报告-后训练Infra: 三阶段RL,MoonEP3,五千万沙箱,KDA感知缓存</a><br>
+<a class="normal_text_link mp_article_text_link" style="font-size:12px;color:#0F4C81;text-decoration:none;" href="https://mp.weixin.qq.com/s/i-NZ-4oCXs48XpDfdcBfPw" target="_blank" data-linktype="2">在NVFP4上超越cuBLAS: 从零手写+Claude极限优化Blackwell GEMM</a><br>
+</section>
+</section>
+
+
+<hr class="hr" style="border-style: solid;border-width: 2px 0 0;border-color: rgba(0, 0, 0, 0.1);-webkit-transform-origin: 0 0;-webkit-transform: scale(1, 0.5);transform-origin: 0 0;transform: scale(1, 0.5);height: 0.4em;margin: 1.5em 0;"  />
+
+<p class="p" style="margin: 1.5em 8px;letter-spacing: 0.1em;color: #3f3f3f;"><span style="font-size:12px;color:#888888;font-family:'Courier New',monospace;">参考：https://x.com/Arindam_1729/status/2115436560850243998</span></p>
+</section>
