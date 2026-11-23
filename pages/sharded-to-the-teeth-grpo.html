@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharded to the Teeth:单节点GRPO混合切分 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Sharded to the Teeth:单节点GRPO混合切分</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://medium.com/@willyouzhizou/sharded-to-the-teeth-distributed-agentic-training-qwen3-6-27b-for-9-per-grpo-step-cc74c713678e">https://medium.com/@willyouzhizou/sharded-to-the-teeth-distributed-agentic-training-qwen3-6-27b-for-9-per-grpo-step-cc74c713678e</a></div>
+<h1>Sharded to the Teeth：65,536 token 长轨迹 GRPO 训进单节点 8×H100</h1>
+<ul>
+<li>原文：<a href="https://medium.com/@willyouzhizou/sharded-to-the-teeth-distributed-agentic-training-qwen3-6-27b-for-9-per-grpo-step-cc74c713678e">Sharded to the Teeth: Distributed Agentic Training</a>（Medium，Will Youzhi Zou / Geodesic，2026-11-20）</li>
+<li>主题：并行策略（训练）、RL 训练（GRPO）、GPU 显存</li>
+<li>星级：⭐⭐⭐⭐（重点阅读）</li>
+<li>一句话要点：65,536 token 长轨迹 GRPO 训 Qwen3.6-27B：TP4 + SP + DP2 + logits 分块四种切分叠起来塞进单节点 8×H100，约 $9 一步；CP2 本来能再省一半显存，但逐元素梯度校验发现 10 批里有 1 批梯度范数差 3 倍，疑为 flash-linear-attention 的 CP 核用了 TF32——不改梯度数学的前提下 CP2 出局。</li>
+</ul>
+<h2>显存账单：激活与 logits 才是大头</h2>
+<p>Qwen3.6-27B：64 层、hidden 5,120、MLP 宽 17,408、词表 248,320；48 层是 Gated DeltaNet 线性注意力、16 层是全注意力。训的是冻结基座上的 LoRA 适配器（rank 64，加在 16 个全注意力层的注意力投影与全部 64 个 MLP 上），只训 3.187 亿参数，训练态一共 5.7 GB——全量训 270 亿参数的 Adam 要 432 GB，LoRA 让单节点训练成为可能。</p>
+<p>激活占大头且随上下文长：Korthikanti 的公式 34·s·h 字节/层，s=65,536、h=5,120 时每层 11.4 GB，算上更宽的 SwiGLU MLP 与门控注意力接近 16 GB；64 层要 0.7–1 TB，超过整节点 640 GB。激活检查点只留每层 671 MB 的输入（共 42.9 GB），反向重算层内，代价约多一次前向。</p>
+<p>词表是陷阱：输出层权重只有 2.5 GB，输出却不然——65,536 位置 × 248,320 词表 = 163 亿个值，bf16 下 32.5 GB，Megatron 为数值稳定用 fp32 算 loss 时是 65 GB，梯度同形；一条轨迹的 logits 约等于全部 64 个 MLP 块的权重。LoRA + 全重算后，一次 65,536 token 的 pass 仍需 146–184 GB。</p>
+<h2>四种切分各切什么</h2>
+<p>TP 切宽度：权重与激活沿 hidden 切，SwiGLU 要求每 rank 拿到 gate 与 up 的对应切片；Qwen3.6 全注意力层只有 4 个 KV 头，TP 上限就是 4。SP 切 token：TP 复制的 norm、dropout、残差激活沿 token 切，每卡只留 1/4；all-gather 恢复完整序列、reduce-scatter 再切开，通信字节与 TP 的 all-reduce 相同。DP 复制权重分数据，梯度 all-reduce 平均；ZeRO stage 1 下 DP2 用 reduce-scatter + all-gather 分片优化器态，通信字节与一次 all-reduce 相同。CP 沿序列切：ring attention 把每 token 的张量也切开，TP、SP、CP 三者切不同维度、省的显存相乘——Meta 训 Llama 3 405B 用 TP8 + CP16 跑 131,072 token 就是这个路数。</p>
+<p>候选布局的账：TP2 要 70–88 GB（贴着 80 GB 上限）、TP4 不加 SP 要 69–77 GB（分配器与 rollout 引擎一分就没余量）、TP4 + SP 是 37–45 GB，logits 分块后实跑不再 OOM。最后的 2 倍因子在 DP2（吞吐翻倍、每副本仍持整条轨迹）与 CP2（全部激活减半、留有余量）之间选。</p>
+<h2>CP2 为什么出局：逐元素梯度校验</h2>
+<p>CP2 的账很诱人：在 TP4 + SP 基础上，被存的层输入 10.7→5.4 GB/卡、重算中的层 3–4→1.5–2 GB、logits 与其梯度 8–16→4–8 GB，总计 37–45→约 26–30 GB。第一轮 CP2 跑起来看着健康：首步 loss 与 DP2 布局七位数字一致，梯度范数在同一起点下差 0.25% 以内。</p>
+<p>但 loss 曲线与梯度范数都是摘要，很多不同的梯度共享同一个范数。团队的规矩是：没有布局能在梯度校验通过前上训练——把全部 512 个 LoRA 梯度张量逐元素与可信参考对比（同一模型、适配器、loss、数据，单卡无分片跑；10 批真实 GRPO 轨迹，5 批 1,600 token 短轨迹、5 批 10,000–16,000 token 全轨迹；噪声基线是仅序列打包不同的两次单卡运行：相对误差 7.1%、余弦 0.9975）。</p>
+<p>长轨迹上 CP2 与参考的距离几乎与 DP2 相同（余弦 0.988 对 0.987、0.933 对 0.932），属于正常 bf16 舍入；但 A2 那批不同：单卡参考梯度范数 2.33、CP2 只有 0.82，余弦 0.33；辅助 loss 下 45.1 对 7.2，余弦 0.12；逐张量余弦最低到 −0.97，且可复现。结论很克制：这不能证明 CP 是错的（A2 的参考范数本身异常大，且没在 DP2 下跑 A2、无法判断信哪边），但它证明了 10 批里有 1 批、两种"等价"的梯度计算差了 3 倍，而 CP 运行的 loss 与梯度范数都不会报警。CP2 没过线，就不用。</p>
+<p>疑似根因在 Qwen3.6 的 Gated DeltaNet 线性注意力层在 CP 下走 flash-linear-attention 的 CP 核（<code>fla.ops.cp</code> 0.5.2）：每卡把整段凝成一个转移矩阵（每 64 token 块一个小矩阵的乘积），输入转了 fp32、但 <code>tl.dot</code> 没传 <code>input_precision</code>，H100 上 Triton 默认 TF32（10 位尾数）；65,536 token、CP2 下每头要链 512 个这样的乘积，舍入在缓慢衰减的长记忆头里累积、落在 GPU 边界之后的 token 上——稀疏、数据依赖、随长度增长，正是观测到的模式。同一库在通用 matmul 里明确写了 <code>allow_tf32=False</code> 钉住 fp32。</p>
+<h2>最终布局与 field guide</h2>
+<p>定稿：每半个节点内 TP4、每个 TP 组内 SP、两半之间 DP2，不用 CP；约 $9 一步（含 serving 与 rollout）。logits 分块削减的最大分配比 CP2 更多，而且不改任何梯度数学——这是 CP2 的真正代价：softmax 求和的块顺序变了、每块梯度要路由回拥有其 token 的卡、DeltaNet 状态分段算、双向跨卡传递。</p>
+<p>文末的 field guide 按每项省多少、代价是什么逐项列出：值得抄的思路是"约束优化"本身——先算账（权重、优化器态、激活、logits 各占多少），再按每卡 80 GB 的硬约束选布局，最后用逐元素梯度校验给布局验货，而不是只看 loss 与梯度范数。</p>
+<h2>为什么值得读</h2>
+<p>这是一篇把"分布式训练是约束优化"讲透的实战记录：账算得细（每项精确到 GB）、取舍有数（三个候选布局逐项比）、否决有据（CP2 的逐元素校验与 TF32 疑点）。单节点训长上下文 RL 的人可以直接照着这张表排自己的布局；更通用的教训是：梯度范数与 loss 曲线拦不住 3 倍的梯度错误，逐元素校验才是布局的准入门。</p>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
