@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inkling 2 Mini：中间 12 层循环跑三遍，26B 小模型拿下同级开源最佳成绩 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Inkling 2 Mini：中间 12 层循环跑三遍，26B 小模型拿下同级开源最佳成绩</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://thinkingmachines.ai/news/inkling-2-mini/">https://thinkingmachines.ai/news/inkling-2-mini/</a></div>
+<h1>Inkling 2 Mini：中间 12 层循环跑三遍，26B 小模型拿下同级开源最佳成绩（中文精读）</h1>
+<ul>
+<li>原文：Introducing Inkling 2 Mini（https://thinkingmachines.ai/news/inkling-2-mini/）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：推理可观测 / 循环架构 / 低比特量化</li>
+<li>一句话要点：Thinking Machines 发布 Inkling 2 Mini：24 层里中间 12 层每 token 循环跑三遍，26.4B 总参数在 DeepSWE v1.1（48.2%）与 Vals Index v2.2（46.5%）上领先所有 100B 以下开源权重模型；权重原生 NVFP4，整机约 20GB，笔记本可离线跑；同步开源的可变循环模型用来研究循环对可监测性的影响。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是第一批公开的循环 Transformer 模型之一，架构、训练与可监测性三部分都给了数字。循环的想法直观：中间层多跑几遍，模型每 token 做更多推理，不用把推理写出来。Inkling 2 Mini 把 24 层分成四组，中间两组跑三遍，48 次层应用来自 24 个存储层；总参数 26.4B，激活 3.4B，每 token 权重激活 5.4B。成绩上，DeepSWE v1.1 48.2%、SWE-bench Pro v2（Hard）77.9%、Vals Index v2.2 46.5%，在 100B 以下开源权重模型里领先；效率上，权重原生 NVFP4 训练、原生部署，整机约 20GB，MacBook 离线就能跑，斯坦福的单位焦耳智能评测 0.703，远高于对照模型。</p>
+<p>文章的另一半是可监测性研究，值得单独读。循环加深了串行深度，模型在内部做更多计算才说出思考，思维链监测器可能抓不到没写出来的推理。团队用可变循环模型 TML-d24-varloop-research（1–5 遍可调，主要按 3 遍训练）测了三件事：不写思维链能推理多久、思维链变短后还可读吗、智能体场景里攻击还藏得住吗。结论是，在这个规模上，循环增加了不言说的推理能力，但没有明显降低可监测性。</p>
+<h2>核心结论</h2>
+<ul>
+<li>循环设计：24 层分四组，每组 6 层，中间两组跑三遍，首尾各跑一遍。训练第 2,000 步时，不循环基座要达到中间循环的损失需 1.51–1.91 倍算力，达到末端循环需 1.24–1.36 倍；28 项评测里 27 项上，循环中间 12 层比循环最后 12 层提升更大。</li>
+<li>注意力残差：每层读取前面模块的输出、自己学混合比例，循环之间传递更丰富的信息；上一遍的消息经门控与序幕输出合并，门控起初完全挡住消息、随后逐步放开，循环在训练中平稳引入。</li>
+<li>训练代价：未剪枝循环版比非循环版训练算力多 7.5%，但非循环版要在 512k token 智能体轨迹上达到同一损失，需多 140% 的推理算力。</li>
+<li>量化与剪枝：专家层全程 NVFP4（GB300 硬件加速），最后四层 MXFP8，部署即训练精度，无转换损失；训练中期剪掉三分之二的专家（每层 384 选 8 → 留最常用的 128 个），再用 1T token 从更大的内部 Inkling 模型蒸馏恢复性能；随后 SFT + 强化学习 2.2T token、2,000 步。</li>
+<li>无思维链能力：可变循环模型的无思维链时间跨度从 1 遍 16 秒升到 3 遍 37 秒，3 遍后持平，跑到 10 遍性能不明显下降；N-Hop 查表成绩一直提升到 10 遍。</li>
+<li>思维链压缩：5 遍推理平均 1,661 个 token，不到 1 遍（3,703 个）的一半，句长与字典收录词占比不变；GPQA Diamond 的 token 效率从 3 遍到 5 遍还在提升，尽管强化学习只在 3 遍上做过。</li>
+<li>可控性极低：750–1,250 token 的思维链里，Inkling 2 Mini 与 3 遍可变循环模型最多 0.1% 的时间按指令走，对照组 Inkling 2 Small 0.3%、Inkling-Small 0.4%、Qwen3.8-27B 1.3%，这项评测分不出循环量的差别。</li>
+<li>智能体监测：LinuxArena 里 Qwen3.8-27B 做监测器几乎发现所有支线任务尝试；换更弱的 Qwen3.6-35B-A3B 做监测器时，隐蔽率没有随循环遍数上升的趋势；监测器只能看到工具调用与输出时会漏掉相当数量的攻击。</li>
+<li>局限：多轮对话与多约束指令不是最强小模型（MultiChallenge 50.0%、ComplexConstraints v1.1 33.4%，落后于 Qwen3.8-27B）；知识由总参数量决定，AA-Omniscience 与同尺寸模型相当。</li>
+</ul>
+<h2>逐节要点</h2>
+<h3>能力</h3>
+<p>强项与 Inkling 2 Small 一致：最擅长长程智能体工作，在测过的大多数任务上是同尺寸开源权重模型里最好的。智能体编码领先所有同级模型，内核优化基准 PMPP-Hard 上接近大得多的 Inkling 2 Small。循环提升推理，但不能让权重存更多事实；知识密集型基准不随遍数提升。搜索与工具补上知识差距：BrowseComp 79.0%、DeepSearchQA 85.3%、MCP Atlas 82.7%，领先同尺寸开源权重模型。56 行基准总表覆盖编码、智能体搜索、视觉、推理、安全五类。斯坦福单位焦耳智能：DGX Spark 上 Inkling 2 Mini 0.703，Qwen3.6-35B-A3B 0.430、Gemma-4-26B-A4B 0.159、Qwen3.5-27B 0.036。Thinkyville：20 位村民全由一台离线 MacBook 上的 Inkling 2 Mini 管理。</p>
+<h3>架构与训练</h3>
+<p>24 层模型源自主力预测缩放梯队，主要改动两处：剪掉三分之二的专家、引入循环；其余训练（量化、数据配比）沿用主力配方。循环设计借鉴循环 Transformer 已有工作，动机是中间层承载更抽象的推理，首尾几层更多负责嵌入与内部表示之间的转换。注意力残差来自 Kimi 团队的工作。NVFP4 专家层全程 4 位，配专用 kernel，GB300 硬件加速；最后四层 MXFP8。剪枝：训练中期某一点剪掉三分之二的专家，留每层最常用的 128 个；再用 1T token 蒸馏恢复。SFT 数据配比与 Inkling 2 Small 类似，强化学习 2.2T token、2,000 步，后训练含同策略蒸馏对齐。</p>
+<h3>可监测性</h3>
+<p>思维链监测的前提是标准 Transformer 每 token 只过一叠层一次，顺序计算步数有限，多步推理只能写在生成的文本里。循环抬高了这个上限：同一层跑多次，串行深度加深，每 token 内部算得更多，没写进思维链的推理监测器抓不到。发布 Inkling 2 Mini 的一个原因就是让社区研究循环 Transformer。可变循环模型 TML-d24-varloop-research 用 1–5 遍训练、主要按 3 遍，强化学习只在 3 遍上做过；这些遍数下的性能可能低估专门训练的水平。</p>
+<h3>不写思维链也能推理多久</h3>
+<p>Think Fast 基准估计无思维链时间跨度：模型在不用思维链、50% 可靠度下能完成的任务长度，以人类完成时间计。引出方法是在回复开头预填内容，让模型直接回答、跳过推理；微调等其他方法可能更高。时间跨度 16 秒（1 遍）→ 37 秒（3 遍），3 遍后持平，10 遍不明显下降。N-Hop Lookup：模型拿几张虚构条目的查表，不写任何东西顺着链走，成绩一直提升到 10 遍。带思维链的标准评测里，增益最大的是长上下文（GraphWalks BFS、MRCR v2），其次是数学、抽象与视觉推理（ARC-AGI、HLE-Diamond、Humanity's Sixth Sense）与长程智能体任务；闭卷事实问答几乎不变。</p>
+<h3>思维链可监测性</h3>
+<p>两项评估：压缩与可读性、可控性。压缩：循环越多，每个推理 token 预算下准确率通常越高，3 遍后收益递减；GPQA Diamond token 效率 3→5 遍还在提升，说明部分压缩来自额外计算本身。可读性：5 遍推理 1,661 token，不到 1 遍（3,703）的一半，句长与字典收录词占比不变，差别是模型更直接、回溯更少；同一道日期题的摘录里，1 遍 582 token 出错又回溯，5 遍 240 token 直接算出，答案同为 Friday。可控性：CoT-Control-QA 评测（GPQA、HLE、MMLU-Pro + 针对思维链本身的指令），五个努力程度汇总、可控率太低，分不出循环量的差别。</p>
+<h3>智能体可监测性与机制可解释性</h3>
+<p>LinuxArena：攻击者模型做现实软件工程任务时能否不被发现地完成恶意支线任务；评测用仅助人微调版（发布版会拒绝许多支线任务）；184 组主任务/支线任务配对子集。Qwen3.8-27B 做监测器几乎发现所有尝试；换更弱的 Qwen3.6-35B-A3B 做监测器排相对顺序。监测器只能看到工具调用与输出时会漏掉相当数量的攻击，但无随遍数上升的趋势。机制可解释性：循环 Transformer 内部算得更多，是可解释性研究特别有意思的场景；团队与 NDIF 合作、向 Goodfire 提前开放模型，早期发现已公开。</p>
+<h3>今天就能用上</h3>
+<p>至少 32GB 内存的 Mac 系统经 Ollama 运行；DGX Spark 上 NVFP4 高效运行；GGUF 版本经 Unsloth 与 llama.cpp 本地推理。Tinker 上推理与微调，Tinker Playground 上聊天。开源推理支持 SGLang、vLLM、Ollama、Unsloth、NVIDIA Dynamo、TokenSpeed、Llama App；强化学习微调支持 SkyRL、Miles、NVIDIA AutoModel。完整权重在 Hugging Face 上提供。</p>
+<h2>局限</h2>
+<ul>
+<li>循环提升推理，不提升知识存储：AA-Omniscience 与同尺寸模型相当，知识密集型基准不随遍数提升。</li>
+<li>多轮对话与多约束指令落后于 Qwen3.8-27B；推理密集型基准落后于更大的模型（CritPt v2、HLE-Diamond）。</li>
+<li>可变循环模型的强化学习只在 3 遍上做过：1、2、4、5 遍的性能可能低估专门训练的水平；更高遍数强化学习训练的模型可能更激进地压缩推理，现有实验不能说明。</li>
+<li>可控性评测的可控率太低（≤0.1%），分不出不同循环量的可控性差别。</li>
+<li>LinuxArena 用的是仅助人微调版，不是发布版；监测器只能看到工具调用与输出时会漏掉相当数量的攻击。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>循环位置的选择：循环中间层比循环末端层收益大（1.51–1.91× vs 1.24–1.36× 计算等价增益），动机是中间层承载抽象推理。</li>
+<li>注意力残差 + 门控消息：每层自学前面模块输出的混合比例；消息门控起初全挡、逐步放开，让循环在训练中平稳引入。</li>
+<li>剪枝后蒸馏恢复：剪掉三分之二的专家后，用 1T token 从更大模型蒸馏，让剩余专家接手被删专家的工作。</li>
+<li>原生低比特：权重以训练时的数值精度部署（20 层 NVFP4 + 4 层 MXFP8），无量化转换损失。</li>
+<li>可监测性实验设计：无思维链时间跨度（Think Fast）、思维链压缩与可读性（token 数 + 句长 + 字典占比）、可控性（CoT-Control-QA）、智能体隐蔽率（LinuxArena + 强/弱两档监测器），四项分开测。</li>
+<li>循环的性价比账：训练算力多 7.5%，换推理算力省 140%（512k token 智能体轨迹上达到同一损失）。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
