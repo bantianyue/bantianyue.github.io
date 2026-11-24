@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>真 On-Policy RL：SGLang 与 Miles 让训练逐比特复现推理对数概率 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>真 On-Policy RL：SGLang 与 Miles 让训练逐比特复现推理对数概率</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://miles.radixark.com/blogs/true-on-policy-rl-bit-exact-rollout-and-training-with-sglang-and-miles">https://miles.radixark.com/blogs/true-on-policy-rl-bit-exact-rollout-and-training-with-sglang-and-miles</a></div>
+<h1>真 On-Policy RL：SGLang 与 Miles 让训练逐比特复现推理对数概率（中文精读）</h1>
+<ul>
+<li>原文：True On-Policy RL: Bit-Exact Rollout and Training with SGLang and Miles（https://miles.radixark.com/blogs/true-on-policy-rl-bit-exact-rollout-and-training-with-sglang-and-miles）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：训练推理一致性 / 训练框架</li>
+<li>一句话要点：SGLang 与 Miles 实现真正的 On-Policy RL，训练端逐比特复现推理端的对数概率，100 步训练零偏差，完整训练步只慢 7%–10%。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>RL 训练默认假设样本来自正在更新的策略本身，但推理端（rollout）与训练端用不同的内核、不同的批量形状跑，有时精度也不同，MoE 里一个很小的数值差异就可能把 token 路由到不同的专家。训练在没人选择的情况下变成 Off-Policy，更新是有偏的，除非加修正。这篇博客把「训练推理一致性」从工程经验变成可验证的数值契约：训练端 FP32 对数概率字节与推理端在每个 token 上相等，覆盖 DeepSeek、GLM、Qwen 全系，投机解码开启时也成立。更值得注意的是维护形态：每算子一份契约让模型接入变成定义固定的任务，智能体 7 小时 51 分钟端到端接好 DeepSeek-V4.1。</p>
+<h2>核心结论</h2>
+<ul>
+<li>逐比特一致：训练端 FP32 对数概率字节与推理端在每个 token 上相等，全深度按位前向一致性检验通过，投机解码开启时也成立，已在 Hopper 与 Blackwell 上测试。</li>
+<li>异步也成立：TOP 只去掉内核失配、留下权重滞后。等权重下常规内核每个 token 差 0.006–0.0095，94%–98% 的 token 不一致；TOP 为 0。不设重要性权重上限时，带路由重放的 TOP 训练平稳，常规 + R3 与不带重放的 TOP 中途掉精度。</li>
+<li>代价可控：64 块 H200 上，完整训练步的 token 吞吐量是常规的 0.90 倍（DeepSeek-V4-Flash）与 0.93 倍（GLM-5.2）；推理 token 速率是 0.79 倍与 0.88 倍。最大单项代价是 GLM-5.2 的解码注意力，每迭代多 2.2–2.8 毫秒。</li>
+<li>设计：每个算子一份数值契约，固定批量形状、服务调度、排布三件事；Miles 通过 Megatron 的 ModuleSpec 接口替换 TOP 模块或继承模块替换单个算子。</li>
+<li>FP8 陷阱：从 FP8 检查点加载的主权重坐在舍入格中心，小更新累积却不改变任何 FP8 权重；TOP 在初始化时把每个主权重按格内一个确定性偏移移动一次，让小更新更早越过边界。</li>
+<li>智能体维护：智能体按模型支持技能在 7 小时 51 分钟内端到端接入 DeepSeek-V4.1；变基到 Miles v0.2.0 约 5 小时；每家族端到端门控已注册进每夜 GPU CI。</li>
+</ul>
+<h2>逐节要点</h2>
+<h3>逐模型验证</h3>
+<p>FP8 是分块 FP8，缩放因子为 2 的幂。DeepSeek-V4.1 用 FP8 稠密权重，MXFP4 专家在 Hopper 上加载时转成 FP8。两侧都用 1 路张量并行；训练端组合 PP、CP、EP，推理端用注意力 DP 加 EP。</p>
+<h3>完整训练运行</h3>
+<p>同步运行里 TOP 既不用 R3 也不用 TIS，训练与推理的对数概率差每一步都是 0.0。异步 Qwen3.6 运行里 TOP 一臂是 TOP + R3：陈旧权重改变专家路由，训练端重放推理端的路由，不设重要性权重上限；新 token 与推理逐比特一致，差面板里的非零部分只是权重滞后。</p>
+<h3>陈旧性</h3>
+<p>差距分两部分：权重滞后由陈旧性界控制，等权重下的内核失配没人选择。常规内核下两者落进同一个数字；TOP 把第二部分归零。滞后项每个 token 0.020–0.058，内核失配 0.006–0.0095，约为滞后项的十分之一到一半。路由变化占 TOP 重尾的大部分；重放路由后，TOP + TIS 的总对数概率差落到常规之下。</p>
+<h3>设计</h3>
+<p>数值契约控制 token 结果变化的三条路：批量形状（固定内核分块与规约顺序）、服务调度（每个 token 的行按与训练端预填充相同的顺序计算，预填充与解码、提示词分块、前缀缓存命中、请求收回恢复时都成立）、排布（专家结果按固定顺序合并，token 的行在哪个 DP rank 上算都相同）。TOP 还把每个采样 token 与请求的种子和位置绑定，token 本身不依赖推理端的服务方式。</p>
+<h3>精确性的代价</h3>
+<p>时间上，Qwen3.6 的 MoE 矩阵乘法多 1.3–1.7 毫秒；循环层（GDN、KDA）解码遵循与预填充和训练相同的分块算术，Qwen3.6 上每迭代 1 个请求时多 0.5 毫秒、128 个请求时多 2.0 毫秒。调度重放是另一条路：保留常规推理内核、记录调度、在训练端重放，省掉额外的推理算术，代价是训练更慢，计划作为插件发布。并行上，TOP 尚不支持张量并行，每块 GPU 算完整投影；专家并行里保持规范专家槽位顺序与固定顺序输出合并，带来重排、缓冲与合并工作。</p>
+<h3>推理速度</h3>
+<p>满批里 TOP 在 DeepSeek-V4-Flash 上达到常规预填充吞吐量的 0.88–0.90，在 GLM-5.2 与 Qwen3.6 上约三分之二，每个长度都如此。4 块 B200 上，DeepSeek-V4-Flash 无投机解码时解码速度是常规的 0.80–0.89 倍，与 H200 一致。</p>
+<h3>完整训练步</h3>
+<p>GLM-5.2：完整训练步 357.9 秒 / 333.0 秒（1.075×），推理 94.7 / 83.3 秒（1.137×），训练 160.7 / 147.1 秒（1.093×）。DeepSeek-V4-Flash：完整训练步 414.4 / 402.3 秒（1.030×），推理 229.7 / 198.1 秒（1.159×），训练 107.0 / 132.6 秒（0.807×）。按 token 归一化：完整训练步 0.93× / 0.90×，推理 0.88× / 0.79×，训练 0.91× / 1.14×。DeepSeek-V4-Flash 上 TOP 生成的 token 少 7.8%、训练的 token 少 7.7%。</p>
+<h3>智能体添加并维护模型</h3>
+<p>智能体接到的任务有三条：一致性（训练端对数概率在一次权重同步后、至少两次推理里与推理端逐比特相等）、方法（技能带智能体从模型配置出发走到前向与反向门控通过）、性能（与常规设置做 sanity 对比，标出回退路径）。演示用 Claude Opus 5.5 高投入，单会话、单台 8×H200 节点，7 小时 51 分钟，除两次技能更新外无人输入。实现中遇到两个技能没检查的问题（量化前向的梯度、投机解码接受长度对比），各补一条检查进技能，一小时内完成。</p>
+<h2>局限</h2>
+<ul>
+<li>TOP 尚不支持张量并行，单请求延迟受影响，靠数据并行在多请求上找回吞吐量。</li>
+<li>显存开销来自处理过的权重缓存、模型专用运行时状态与反向适配器的临时缓冲，影响大小取决于模型与工作负载。</li>
+<li>补多少修正仍是训练配方的选择；TOP 改变的是被修正的量恰好就是滞后本身，不是修正的量。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>数值契约模式：把「训练复现推理」拆成每个算子一份固定计算方式的契约，批量形状、服务调度、排布三条线分别约束。</li>
+<li>FP8 主权重偏移：从 FP8 检查点加载的主权重按格内确定性偏移移动一次，解决小更新在舍入格中心停滞的问题。</li>
+<li>路由重放（R3）与截断重要性采样（TIS）分工：R3 修正路由变化，TIS 截断权重重尾；异步训练里两者配合才能在不设上限时保持平稳。</li>
+<li>门控即维护：每家族端到端门控注册进每夜 GPU CI，升级破坏精确性时第一步就发现。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
