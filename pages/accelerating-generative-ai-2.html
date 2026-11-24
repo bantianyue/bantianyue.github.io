@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyTorch 加速生成式 AI（二）：GPT-Fast 把 Llama-7B 从 25.5 推到 244.7 tok/s · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>PyTorch 加速生成式 AI（二）：GPT-Fast 把 Llama-7B 从 25.5 推到 244.7 tok/s</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://pytorch.org/blog/accelerating-generative-ai-2/">https://pytorch.org/blog/accelerating-generative-ai-2/</a></div>
+<h1>PyTorch 加速生成式 AI（二）：GPT-Fast 把 Llama-7B 从 25.5 推到 244.7 tok/s（中文精读）</h1>
+<ul>
+<li>原文：Accelerating Generative AI with PyTorch II: GPT, Fast（https://pytorch.org/blog/accelerating-generative-ai-2/）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：并行策略（推理）/ 推理优化 / 量化</li>
+<li>一句话要点：PyTorch 团队用纯原生 PyTorch 写了一个 LLM（gpt-fast），不到 1,000 行代码，Llama-7B 从 25.5 tok/s 一路做到 244.7 tok/s：torch.compile + 静态 KV 缓存 107.0、int8 权重-only 量化 157.4、int4 + GPTQ 202.1、全部组合 244.7；张量并行再把 Llama-70B 做到 55 tok/s。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是 gpt-fast 的官方讲解，六步加速路线每步都带实测数字，而且每步都换一个瓶颈：先是 CPU 开销，再是访存带宽，再是串行依赖，最后是单卡带宽上限。读完能建立一张完整的推理加速地图：解码为什么是访存受限、MBU 怎么算、量化为什么必须配 kernel 融合、投机解码为什么不改变输出质量、张量并行与数据并行的分工。</p>
+<p>文章的另一个价值是方法论：所有优化都用纯原生 PyTorch，不到 1,000 行代码，复制粘贴就能改。torch.compile 在解码场景里从零生成的 kernel 比 CuBLAS 与 FlashAttention2 还快，这个反直觉的结论有明确的机理：batch 为 1 时解码的矩阵乘全是矩阵向量乘，完全访存受限，正好在编译器能自动生成的范围里。</p>
+<h2>核心结论</h2>
+<ul>
+<li>起点 25.5 tok/s：极其基础的实现严重受 CPU 开销限制，CPU 告诉 GPU 做什么的速度跟不上 GPU 干活的速度。</li>
+<li>第 1 步 torch.compile + 静态 KV 缓存：107.0 tok/s，提升 320%。mode="reduce-overhead" + fullgraph=True；静态 KV 缓存静态分配最大尺寸、mask 掉未用值；prefill 与解码分开编译。</li>
+<li>torch.compile 帮上忙的两个因素：降开销（CUDAGraphs 自动应用）与生成更快的 kernel（解码基准里每个 kernel 都是从零生成的，包括矩阵乘与注意力，比 CuBLAS 与 FlashAttention2 快）。</li>
+<li>第 2 步 int8 权重-only 量化：157.4 tok/s，提升 47%。MBU 72%（7B 参数 × fp16 2 字节 × 107 tok/s ÷ A100 2 TB/s），已接近理论上限；只量化权重、计算仍用 bf16，精度几乎无损；不用 torch.compile 的 int8 反而比 fp16 还差，因为 kernel 必须融合。</li>
+<li>第 3 步投机解码：草稿模型生成 8 个 token、验证模型并行验证，不改变输出质量；CodeLlama-34B + CodeLlama-7B 生成代码提速 2 倍，Llama-7B + TinyLlama-1B 提速约 1.3 倍；实现约 50 行原生 PyTorch。</li>
+<li>AMD：全部优化原样搬到 MI250X，一个 GCD（即一半）用 int8 量化做到 102.5 tok/s。</li>
+<li>第 4 步 int4 + GPTQ：202.1 tok/s，提升 28%。int4 精度损失明显，用每 32 个元素一个缩放因子 + GPTQ 校准限制损失；int4 反量化与矩阵向量乘融合的 kernel 由手写 CUDA kernel 提供。</li>
+<li>第 5 步全部组合：244.7 tok/s，提升 21%。</li>
+<li>第 6 步张量并行：Llama-70B int8 做到 55 tok/s；实现 150 行代码，不需要改模型。</li>
+<li>结论：简单性 766 行代码（model.py 244 + generate.py 371 + tp.py 151，不算量化）实现快速推理 + 投机解码 + 张量并行；性能上 Llama-7B 241 tok/s、Llama-70B 80 tok/s，接近甚至超过当时最好的公开性能数字。</li>
+</ul>
+<h2>逐节要点</h2>
+<h3>起点：25.5 tok/s</h3>
+<p>基础实现严重受 CPU 开销限制：CPU 告诉 GPU 做什么的速度跟不上 GPU 干活的速度。GPU 是算力惊人的大工厂，CPU 是来回传指令的信使；大规模深度学习系统里 GPU 干 100% 的活，CPU 只负责告诉 GPU 该干什么。CPU 让 GPU 做一次加法，等再送来下一块活，GPU 早就干完了上一块。出路有两条：重写成 C++ 甚至原生 CUDA，或者一次给 GPU 送更多活；答案是 torch.compile。</p>
+<h3>第 1 步：torch.compile 与静态 KV 缓存，107.0 tok/s</h3>
+<p>torch.compile 把更大一片区域收进单个编译区域，mode="reduce-overhead" 降 CPU 开销非常有效；fullgraph=True 验证没有图断裂，确保火力全开。用起来就是包一下函数。两个障碍：KV 缓存随生成变长要反复重分配（还要拷贝），动态性又让 cudagraph 用不上——用静态 KV 缓存解决；prefill 因 prompt 长度可变仍需动态性——两个阶段分开编译。性能提升 4 倍多。</p>
+<h3>旁注：torch.compile 是怎么帮上忙的？</h3>
+<p>两个因素：降开销（CUDAGraphs 自动应用）与生成更快的 kernel。解码基准里 torch.compile 从零生成每个 kernel，包括矩阵乘与注意力，比 CuBLAS 与 FlashAttention2 快。机理：有 KV 缓存、batch 为 1 时，Transformer 里每一次矩阵乘实际上都是矩阵向量乘，计算完全受内存带宽限制，正好在编译器能自动生成的范围里；实测 torch.compile 的矩阵向量乘比 CuBLAS 快不少。</p>
+<h3>第 2 步：int8 权重-only 量化，157.4 tok/s</h3>
+<p>最大瓶颈是把权重从 GPU 全局内存搬到寄存器：每次前向都要把每个参数摸一遍。用 MBU（模型带宽利用率）衡量：模型总大小 × 每秒推理次数 ÷ GPU 峰值带宽。7B 参数 × fp16（2 字节）× 107 tok/s ÷ A100 2 TB/s，MBU 是 72%，已经很好了（连拷贝内存都很难突破 85%）。这意味着已接近理论极限：不改问题本身，最多再抠 10%。能改的只有每个参数占几个字节——于是 int8 量化：只量化权重，计算仍用 bf16，精度几乎无损；torch.compile 能轻松生成高效的 int8 代码。不用 torch.compile 的 int8 反而比 fp16 还差，因为 kernel 必须融合。加上 int8 量化，性能提升 50%，来到 157.4 tok/s。</p>
+<h3>第 3 步：投机解码</h3>
+<p>生成 100 个 token 就要把权重搬 100 次。串行依赖看似绕不开，但投机解码打破了它：资深工程师 Verity（大模型，验证模型）又对又慢，初级工程师 Drake（小模型，草稿模型）又快又不总对；Drake 先写代码，Verity 审一遍，前 3 个决策对、后 2 个重做，一次审阅产出 3 段验证过的代码。放到推理里：草稿模型生成 8 个 token，验证模型并行处理，扔掉不匹配的。关键性质：不改变输出质量。实现约 50 行原生 PyTorch。性能随生成文本与草稿/验证模型对齐程度变化：CodeLlama-34B + CodeLlama-7B 生成代码提速 2 倍，Llama-7B + TinyLlama-1B 提速约 1.3 倍。</p>
+<h3>旁注：在 AMD 上跑</h3>
+<p>解码里的每个 kernel 都是 torch.compile 从零生成、再转成 OpenAI Triton；AMD 有 torch.compile 后端与 Triton 后端，全部优化原样搬到 AMD GPU 上跑。用 int8 量化，一块 MI250X 的一个 GCD（即一半）做到 102.5 tok/s。</p>
+<h3>第 4 步：int4 量化与 GPTQ，202.1 tok/s</h3>
+<p>权重从 16 位降到 8 位能提速，降到 4 位提速更大，但精度损失成了大得多的顾虑：int8 没有可察觉的精度损失，int4 有。两个技巧：更细粒度的缩放因子（每 32 个元素一个，组大小 32 是社区常见选择）与更先进的量化策略（GPTQ 利用样本数据校准权重，仓库里基于 torch.export 原型实现）。int4 反量化与矩阵向量乘融合的 kernel 由手写 CUDA kernel 提供。合起来做到 202.1 tok/s。</p>
+<h3>第 5 步：全部组合，244.7 tok/s</h3>
+<p>把所有技术组合起来，Llama-7B 做到 244.7 tok/s。</p>
+<h3>第 6 步：张量并行</h3>
+<p>单卡上压延迟到头后，多卡带来更多内存带宽。要压单个样本的延迟，就要把一个 token 的处理拆到多个设备上，即张量并行。PyTorch 提供与 torch.compile 组合的张量并行底层工具；实现 150 行代码，不需要改模型。之前所有优化都能继续与张量并行组合：Llama-70B int8 做到 55 tok/s。</p>
+<h3>结论与致谢</h3>
+<p>简单性：不算量化，766 行代码实现快速推理 + 投机解码 + 张量并行。性能：Llama-7B 241 tok/s、Llama-70B 80 tok/s，接近甚至超过当时最好的公开性能数字。代码在 pytorch-labs/gpt-fast，目标不是再提供一个库让人 import，而是鼓励用户复制粘贴、fork、修改。致谢 Lightning AI、GGML、Andrej Karpathy、MLC-LLM。</p>
+<h2>局限</h2>
+<ul>
+<li>基准只看延迟（batch size=1），A100-80GB、功耗限制 330W；大 batch 下的结论不同。</li>
+<li>int4 量化有精度损失，需要 GPTQ 校准与细粒度缩放因子兜底；int4 反量化融合 kernel 依赖手写 CUDA，torch.compile 生成不了。</li>
+<li>投机解码的运行时性能随生成文本与草稿/验证模型对齐程度变化，不保证固定加速比。</li>
+<li>结论里的 241 tok/s 与第 5 步的 244.7 tok/s 是同一配置在不同表述下的数字，原文如此，未做统一。</li>
+<li>2024 年 11 月的文章，torch.compile 与相关后端此后已有演进。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>加速路线图的排布：每步换一个瓶颈（CPU 开销 → 访存带宽 → 串行依赖 → 单卡带宽），每步都有前后对照的实测数字。</li>
+<li>MBU 公式：参数量 × 每参数字节数 × 每秒 token 数 ÷ 峰值带宽，是判断解码优化空间的标尺；72% 已接近上限时，继续优化必须改问题本身。</li>
+<li>静态 KV 缓存：静态分配最大尺寸 + mask 未用值，去掉重分配与动态性。</li>
+<li>量化必须配 kernel 融合：不用 torch.compile 的 int8 反而比 fp16 差，量化收益来自融合 kernel，不是单纯减半字节数。</li>
+<li>投机解码的验证模型/草稿模型分工与不改变输出质量的保证。</li>
+<li>张量并行与数据并行的分工：压单个样本延迟要拆一个 token 的处理（张量并行），不是加 batch。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
