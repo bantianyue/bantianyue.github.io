@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>从 GQA 到 MLA 再到混合状态：注意力压缩如何改写推理系统 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>从 GQA 到 MLA 再到混合状态：注意力压缩如何改写推理系统</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://medium.com/@zwg0606/inference-infrastructure-4-attention-from-gqa-and-mla-to-hybrid-state-96f474fec333">https://medium.com/@zwg0606/inference-infrastructure-4-attention-from-gqa-and-mla-to-hybrid-state-96f474fec333</a></div>
+<h1>从 GQA 到 MLA 再到混合状态：注意力压缩如何改写推理系统</h1>
+<ul>
+<li>原文：<a href="https://medium.com/@zwg0606/inference-infrastructure-4-attention-from-gqa-and-mla-to-hybrid-state-96f474fec333">Inference Infrastructure (4): Attention: From GQA and MLA to Hybrid State</a>（Medium，Johney Zheng，推理基建系列第 4 篇，2026-11-24 收藏）</li>
+<li>原文首发：<a href="https://johneyzheng.top/posts/%E6%8E%A8%E7%90%86INFRA%E6%96%B9%E6%B3%95%E8%AE%BA-04-attention/?lang=en">Johney Zheng 的博客</a></li>
+<li>主题：推理优化、KV 缓存、注意力架构、并行策略（推理）</li>
+<li>星级：⭐⭐⭐⭐（重点阅读）</li>
+<li>一句话要点：注意力压缩分两条线：Qwen 线用 GDN 线性化绕过 KV，DeepSeek 线沿通道、读取、序列三个正交维度逐维压缩；选哪条线，决定 KV 容量、每步读取字节与可切分性——压缩倍数本身不是答案，三把标尺合起来才是。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>看注意力变体对推理系统的影响，要看三样东西：KV 容量、每步读取字节数、算子能不能切分。按这三把标尺，MLA、GDN 与压缩注意力改写推理系统的方式各不相同，代价也各不相同。</li>
+<li>两条演进线：Qwen 线从 MHA 到 GQA 再到 3:1 的 GDN 与 GQA 混合，用线性化绕过 KV；DeepSeek 线从 MLA 的通道维压缩，到 DSA 的稀疏读取，再到 CSA/HCA 的序列维压缩，沿三个正交维度逐维压缩，始终保留 softmax。</li>
+<li>MLA 把每 token KV 从 1.9 MB 压到 70 KB（28 倍），但潜变量全头共享，张量并行只能复制不能切分，解码注意力变成算力受限。</li>
+<li>GDN 用固定大小状态替代 KV，45 层只占 94 MB，但前缀缓存部分失效，容量规划必须分两段算。</li>
+<li>CSA/HCA 沿序列维继续压缩：压缩路径与滑窗路径在查询处汇合，索引器选 top-1024，提速 2 倍、召回 99.7%。</li>
+</ul>
+<h2>两条演进线</h2>
+<p>Qwen 线：MHA → GQA（全部 Qwen2）→ 3:1 GDN+GQA 混合（Qwen3-Next 验证，Qwen3.5 放大）。思路是直接替换 75% 的注意力层，用线性化绕过 KV。</p>
+<p>DeepSeek 线：MHA → MLA（V2，通道维压缩）→ +DSA（V3.2，稀疏读取）→ CSA/HCA（V4，序列维压缩）。思路是保留 softmax，在内部沿通道、读取、序列三个正交维度逐维压缩。</p>
+<p>2026 年模型对照（部署相关的差异才值得比）：</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>规模</th>
+<th>注意力 / 状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Qwen3.5-397B-A17B</td>
+<td>397B 总参数、17B 激活；60 层，d=4096</td>
+<td>45 层 GDN + 15 层全注意力</td>
+</tr>
+<tr>
+<td>DeepSeek-V4-Pro</td>
+<td>1.6T 总参数、49B 激活</td>
+<td>CSA/HCA 混合压缩注意力</td>
+</tr>
+<tr>
+<td>Kimi K2.6</td>
+<td>1T 总参数、32B 激活；384 专家，top-8</td>
+<td>MLA，MoonViT 400M</td>
+</tr>
+<tr>
+<td>GLM-5.1</td>
+<td>78 层，d=6144；256 路由 + 1 共享，top-8</td>
+<td>MLA + DSA，潜变量 512，RoPE 64，索引器 top-2048</td>
+</tr>
+</tbody>
+</table>
+<p>KV 尺寸是推导估计值，不是框架最终分配的量：Qwen 全注意力部分约 30 KiB/token，Kimi 的 61×576×2 约 68.6 KiB/token；GLM 的 78×576×2 约 87.8 KiB/token，只覆盖潜变量加 RoPE，索引器等状态要另算。DS-V4 约 10KB/token 的数字是基于压缩布局的早期量级估计，不能当固定常量用。混合精度、页对齐与额外缓存字段都会改变实际占用。</p>
+<h2>MLA：压缩通道维</h2>
+<p>做法：K 与 V 共享一个低秩中间表示，不按头存储。<code>x</code> 经 <code>W_DKV</code> 得到 512 维潜变量 <code>c_KV</code>，再经 <code>W_UK</code>、<code>W_UV</code> 得到 <code>K_nope</code> 与 <code>V</code>；RoPE 部分单独存 64 维，位置相关，不能被吸收。</p>
+<p>每 token KV = <code>L × (512 + 64) × bpp</code> = 61 × 576 × 2 = 70 KB，对 MHA 的 61 × 16384 × 2 = 1.9 MB，小 28 倍。</p>
+<p><strong>矩阵吸收（解码必需）</strong>：不吸收时，每步先把潜变量解压回完整 K 再算注意力，省了显存，却每步多付一次巨大的解压 matmul。吸收是提前把 <code>W_UK</code> 并进 <code>W_UQ</code>，让查询直接在潜变量空间里做点积：<code>q_nope · k_nope^T = x·(W_UQ·W_UK^T)·c_KV^T</code>。本质是摊销：预处理 token 少的那一侧。解码时只有一个查询，吸收稳赚；预填充时两侧一样长，吸收反而要付从 128 维到 512 维的每对开销，预填充用不吸收的 MHA 形态。不吸收的代价：128K 上下文下，每步浪费约 4400 GFLOPs，是模型全部活跃参数算力（约 74 GFLOPs）的 60 倍。</p>
+<p><strong>系统后果</strong>：潜变量由全部头共享，没有头维度可切分，张量并行下只能复制不能切分，注意力必须用数据并行；token 随之散到各卡，MoE 层需要一次 all-to-all 再把它们聚回来。P/D 传输里，没有头维度反而意味着无需重排。</p>
+<p><strong>瓶颈在转移</strong>：吸收后 128 个头共享 576 维潜变量，解码时算术强度 I 约 242（BF16），高于该配置 37 到 42 的脊点，解码注意力主要受算力限制。实测 FlashInfer MLA 达到 85 到 106 TFLOPS，只用 0.4 TB/s 带宽；B=32、s=32K 时单层 3.2 毫秒，时间与头数乘上下文成正比。这个结论只适用于此处实测的每卡 128 头配置；KV 压缩仍带来容量收益，但延迟并不随字节减少同比例下降。该配置下验证（q_len=2）的注意力时间升到 2.0 到 2.2 倍。TP8 切到每卡 16 头时，I 约 30，WGMMA 的 M 维填不满，只达到 23 到 26 TFLOPS，算力与带宽都没饱和，128 头的瓶颈结论不再适用。</p>
+<h2>GDN：不压缩，直接绕过去</h2>
+<p>做法：GDN（Gated DeltaNet）用固定大小状态的递推更新，替代 <code>softmax(QK^T)V</code> 的二次复杂度。基础线性注意力 <code>S_t = S_{t-1} + k_t v_t^T</code>，输出 <code>o_t = q_t^T S_t</code>；GDN 加两处改动：<code>S_t = α_t·S_{t-1} + β_t·k_t(v_t − k_t^T S_{t-1})^T</code>。</p>
+<p>两个机制各管一摊：<strong>门控 α</strong>控制忘掉多少历史，状态不会无界累积；<strong>Delta 规则</strong>只写预测错的那部分。没有它，同一个 key 反复出现会让状态范数爆炸（实测重复 12 次：基础线性注意力的状态范数达到 18.5，GDN 保持在 3.2）。</p>
+<p>GDN 层没有随序列增长的标准 KV，但持有固定大小的状态（Qwen3.5 每请求约 94 MB，是布局估计值，实际数字取决于状态精度、卷积状态与检查点策略）。</p>
+<p><strong>系统后果之一，内存曲线分两段</strong>：Qwen3.5 的 45 层 GDN 持有固定大小状态，只有 15 层全注意力层有 KV：<code>Mem(req) = 94 MB + s × 30 KB</code>。按上述布局估计，交叉点约 3K token；短请求里固定大小状态可能比 KV 还大。容量规划公式必须有两段，单个 <code>s×KV</code> 项会严重低估短请求。</p>
+<p><strong>系统后果之二，前缀缓存部分失效</strong>：标准 KV 是只追加的，前缀的 K/V 保持完整、可复用；GDN 状态是有损压缩的整个前缀摘要，没法截断回第 n 个 token。折中是保留多个检查点，但这些检查点也是窗口化的，不是连续的。</p>
+<h2>CSA/HCA：沿序列维继续压缩</h2>
+<p>CSA 与 HCA 共享同一套注意力层数据流：压缩路径把隐状态投影成内容与权重 logit，分组 softmax 后聚合成压缩条目；滑窗路径保留最近 128 个 token 的未压缩 KV。CSA 在压缩条目上加稀疏选择，HCA 直接拼全部条目；两路在查询处汇合，拼成该注意力步的 KV 集合，再走共享 KV 的 MQA 与输出侧 RoPE。</p>
+<p>底层只有中间段不同：CSA 层 m=4，重叠流，索引器选 top-1024，保留局部细节；HCA 层 m'=128，单流，对全部条目做稠密计算，提供粗粒度全局上下文。Pro 版共 61 层，先 2 层 HCA 再交替，两路都带窗口与注意力 sink。KV 布局：压缩条目进 KV Cache（块 = lcm(4,128) = 128 个原始 token），窗口 KV 与未压缩尾部进 State Cache，各自独立淘汰。</p>
+<p>索引器（Lightning Indexer，FP4）用共享低秩查询向量打分，top-k 选 1024 个压缩条目，提速 2 倍、召回 99.7%。滑窗存在的原因是因果查询只能看到更早的完整压缩块，窗口补回查询所在块内的近期细节。</p>
+<h2>同一配置下的结构对照</h2>
+<table>
+<thead>
+<tr>
+<th>结构</th>
+<th>每 token KV（L=61，头维 128）</th>
+<th>每解码步读取（s=32K）</th>
+<th>预填充计算量</th>
+<th>张量并行切分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>MHA（64 头）</td>
+<td>2·L·64·头维·2B ≈ 1.9 MB</td>
+<td>62 GB</td>
+<td>O(s²)</td>
+<td>沿 64 个头切，TP≤64</td>
+</tr>
+<tr>
+<td>GQA-8</td>
+<td>2·L·8·头维·2B ≈ 244 KB</td>
+<td>8.0 GB</td>
+<td>O(s²)</td>
+<td>沿 KV 头切，TP≤8</td>
+</tr>
+<tr>
+<td>MLA</td>
+<td>L·(512+64)·2B ≈ 70 KB</td>
+<td>2.3 GB</td>
+<td>O(s²)，解码用矩阵吸收</td>
+<td>潜变量全头共享，只能复制，必须用 DP</td>
+</tr>
+<tr>
+<td>GDN（线性）</td>
+<td>0；固定状态约 94 MB/请求</td>
+<td>与 s 无关</td>
+<td>O(s)</td>
+<td>状态可沿 V 头切；预填充检查点不能截断</td>
+</tr>
+<tr>
+<td>DS-V4（CSA+HCA）</td>
+<td>约 10 KB（估计）</td>
+<td>约 0.33 GB</td>
+<td>CSA O(s·k)，k=1024；HCA O((s/128)²)</td>
+<td>与 MLA 同，须用 DP</td>
+</tr>
+</tbody>
+</table>
+<h2>值得注意的点</h2>
+<ul>
+<li>KV 压缩的收益不在延迟上：MLA 的例子里，KV 少 28 倍，解码注意力却变成算力受限，延迟不随字节减少同比例下降。容量收益与延迟收益要分开算。</li>
+<li>潜变量共享是一把双刃剑：省了 KV，但拿掉了头维度，张量并行只能复制；MoE 层为此多一次 all-to-all，P/D 传输反而省了重排。</li>
+<li>GDN 的 94 MB 是固定成本：短请求（3K token 以下）里固定状态比 KV 还大，容量规划不分两段会低估短请求。</li>
+<li>前缀缓存对混合状态部分失效是结构性代价：GDN 状态是有损摘要，截断与复用要靠多检查点折中，不是免费修复。</li>
+<li>文中 KV 尺寸、状态大小多处标明是布局估计值或早期量级估计，引用时别当固定常量用。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
