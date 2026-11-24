@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>微软 Rocket：支撑 RL 数千步长程训练的基础设施 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>微软 Rocket：支撑 RL 数千步长程训练的基础设施</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/</a></div>
+<h1>微软 Rocket：支撑 RL 数千步长程训练的基础设施（中文精读）</h1>
+<ul>
+<li>原文：<a href="https://microsoft.ai/news/rl-infrastructure-at-microsoft-ai/">RL infrastructure at Microsoft AI</a>（Microsoft AI，2026-11-23）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：训练核心流程 / 训练框架</li>
+<li>一句话要点：微软 AI 自研 RL 框架 Rocket，用异步环路、陈旧度控制、逐比特数值一致性与容错弹性，支撑从三万亿参数基座出发、只靠 RL 爬升的数千步长程训练。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这篇是微软 AI 第一次系统讲 RL 基础设施的文章。主角不是模型，是让模型长程爬坡的系统：从基座出发、不用蒸馏、靠 RL 本身爬升能力，训练要跑数千步、持续数周到数月、用数千 GPU。这种 regime 下，三个平时可以忽略的问题变成主要设计约束：rollout 与学习器之间的策略陈旧度、采样器与学习器的数值不一致、长程任务里的故障与资源变化。文章把每个约束的量化结果都摆出来了：权重传输 15 秒、学习器恢复 5 分钟、三项措施合计省 17.37% 训练算力。</p>
+<h2>核心结论</h2>
+<ul>
+<li><strong>长程 RL 的 regime 变了。</strong> MAI Base 2 是三万亿参数基座，正在用 Rocket 做后训练，不从第三方模型蒸馏。蒸馏模型开始 RL 时已接近能力上限，RL 只是短精炼；从基座爬升则相反，基础设施挑战成为主要设计约束。</li>
+<li><strong>Rocket 是异步 GRPO 环路。</strong> 控制器选题、问题工作器分发、rollout 工作器管理智能体循环（采样器 + 工具分发器 + 沙箱执行环境 SEE / 搜索 / MCP）、打分器评轨迹、问题工作器算组优势、控制器打包学习器批次、学习器更新策略、定期权重传输刷新采样器。</li>
+<li><strong>陈旧度有公式。</strong> token 陈旧度 ≈（采样器滞后 + token 被训练的时刻 − token 生成的时刻）/ 训练步间隔。控制手段：采样器权重每 4 步更新（传输 15 秒）、优先完成已有 rollout（每个 rollout 首请求前等 24 分钟）、丢弃失败 rollout（最快的等最慢的 7.6 小时）、学习器超配 GPU 让任务受推理制约（组在控制器队列只待 12 秒）。</li>
+<li><strong>数值精度：MXFP8 存、BF16 算。</strong> MoE 权重占参数 95% 以上，MXFP8 存储几乎减半；但 MXFP8 算比反量化到 BF16 再算，采样器—学习器差异更大，所以存 MXFP8、算 BF16。KV 缓存同理：全局注意力 MXFP8 存、BF16 算，局部注意力与最后三层全局注意力保留 BF16；全局上下文 token 多容纳约 67%。</li>
+<li><strong>数值一致性：逐比特。</strong> 采样器与学习器在相同检查点与输入下计算逐比特一致，性能没有明显下降。关键改动：注意力输出投影复制权重、all-gather 后单 GPU 计算；MoE 专家合并用 all-to-all 回传、本地 FP32 加权和；共享 FA4 实现，对齐滑动窗口 K 块边界与 KV 切分。逐比特匹配轮在 L42（7B 激活 / 180B 总参数）上爬升更高。</li>
+<li><strong>容错与弹性省了 17.37%。</strong> 学习器单点恢复约 5 分钟（省 7.07% GPU 小时）；作业内恢复省 0.42%；运行时弹性省 9.88%。备用节点组顶替故障学习器切片；双层调度分离集群节点分配与 Rocket 的拓扑感知放置。</li>
+<li><strong>爬升在继续。</strong> 聚合推理基准上已超过 Claude Opus 4.8，几周内有望超过 GPT-5.6 Sol；对数线性拟合 R² = 0.974，爬升没有平台期也没有失稳。</li>
+</ul>
+<h2>分节要点</h2>
+<h3>后训练 MAI Base 2</h3>
+<p>长期、稳定、数值准确的 RL 是微软 AI 通往人本超级智能的关键一环。MAI Thinking 1 技术报告介绍过 Rocket（把 MAI Base 1 后训练成 MAI Thinking 1）；此后 Rocket 改进到 MAI Base 2 要求的规模。三道挑战：陈旧度、数值一致性、容错与弹性。蒸馏与非蒸馏是两种 regime：蒸馏模型 RL 只是短精炼，失败可重启、失配没时间累积；从基座爬升则相反。verl 与 slime 是开源基础，但长程爬升超出它们通常使用的 regime。MAI 拥有三个紧密连接的系统：学习器与训练框架、Rocket、基于 MAI 维护的 SGLang 分支的推理引擎；底层用 Kubernetes/Slurm 分配节点、Ray actor 运行组件。</p>
+<h3>Rocket 总览</h3>
+<p>图 1 是异步训练环路。GRPO 按同一问题的多个 rollout 的奖励相互比较算优势。控制器（1）选问题，问题工作器（2）分发 rollout 请求到 rollout 工作器池（3）；rollout 工作器跟踪进行中 rollout 状态；智能体循环向采样器（4）要回复、经工具分发器到任务环境（5），可在 SEE 执行动作、查搜索、调 MCP 工具；打分器评轨迹，问题工作器算组优势；控制器（1）打包学习器批次，学习器（6）取 token ID 与采样对数概率、更新策略；控制器定期发起权重传输；恢复检查点保存学习器与控制器状态。</p>
+<h3>控制陈旧度</h3>
+<p>最大规模的任务混合几分钟的问题与持续数小时的智能体任务（图 2：一天 113 万次 rollout，指令遵循中位 2 分钟、软件工程中位 93 分钟、249 轮）。陈旧度是生成 token 时的策略版本与训练时的版本之差；离策略训练增加不稳定风险。图 3：对数概率平均绝对差随陈旧度增长，陈旧度为零时无差异。图 4：同一 GRPO 组的三个 rollout，采样器每 4 步收一次最新权重；公式的分母有反直觉后果——批量不变时加推理服务器会缩短训练步间隔，可能增加陈旧度。</p>
+<h3>数值精度</h3>
+<p>MAI Thinking 1 时采样器全程 BF16；MAI Base 2 更大，MoE 权重与 KV 缓存有选择地用 MXFP8。MoE 权重占参数 95% 以上，MXFP8 存储几乎减半、EP 度更小。学习器复现采样器的量化（量化到 MXFP8 立即反量化到 BF16 再算）以保训练稳定。局部与全局注意力 5:1 混合；同时量化两者比只量化全局引入大得多的差异，所以局部注意力与最后三层全局注意力保留 BF16。</p>
+<h3>数值一致性</h3>
+<p>精度匹配只是数值一致性的一部分；算子、并行、运算顺序、中间舍入的差异也会产生不同 token 概率，且差异在训练中演变（后期检查点比初始化时更大）。三处改动：注意力输出投影（复制权重、all-gather、单 GPU 投影，学习器不用 TP）；MoE 专家合并（all-to-all 回传、本地 FP32 加权和）；注意力算子（共享 FA4，对齐滑动窗口 K 块边界与 KV 切分，固定每切分 KV token 数）。</p>
+<h3>长程任务、容错与弹性</h3>
+<p>表 1（按 6,000 GPU 估算）：作业内恢复 0.42%（10.5 小时，63,000 GPU 小时）、学习器恢复 7.07%（176 小时，1,056,000 GPU 小时）、运行时弹性 9.88%（246 小时，1,476,000 GPU 小时），合计省 432.5 小时、17.37%、2,595,000 GPU 小时。学习器故障时控制器、rollout 工作器与推理集群继续运行；推理副本可替换；控制面（Ray head 与 CPU actor）在纯 CPU 节点上隔离。弹性：学习器、推理工作器、控制器独立扩缩；放置尊重互联拓扑（机架级 Blackwell 集群）；备用节点组顶替故障学习器切片；运行时设置类型化、可校验、动态读取。</p>
+<h3>下一步方向</h3>
+<p>图 8：聚合推理基准（数十项公开与私有评测合成一个数字）上的长程对数线性爬升。MAI 模型最近超过 Claude Opus 4.8，几周内有望超过 GPT-5.6 Sol。爬升持续、无平台期、无失稳，进展是 RL 数据与算力的可预测函数。团队在为下一代更大模型准备 Rocket，并招聘相关方向的人才。</p>
+<h2>局限</h2>
+<ul>
+<li>图 2–图 8 与表 1 的全部数字都在 PDF 里，网页正文没有这些图；精读页的图是 PDF 裁剪版。</li>
+<li>文章没有给出 MAI Base 2 的具体训练步数、GPU 数量与聚合基准的完整评测清单；表 1 的节省是估计值，随工作负载配比与故障时间点变化。</li>
+<li>SGLang 改造细节留待后续文章，本篇只讲了框架与接口设计。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>陈旧度公式与四项控制手段（频繁权重更新、优先完成已有 rollout、丢弃失败 rollout、学习器超配）是一套可直接对照的异步 RL 检查清单。</li>
+<li>“存储精度与计算精度分离”（MXFP8 存、BF16 算，学习器做伪量化复现）是长上下文大模型 rollout 的实用模式。</li>
+<li>逐比特一致性的三处改动（投影复制权重、专家合并本地 FP32 求和、FA4 切分对齐）说明：训练推理一致性要在算子与规约顺序层面做，不只在精度层面做。</li>
+<li>表 1 的记账方式（按事件类型 × 每次节省 × 占比）适合评估容错与弹性投入的回报。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
