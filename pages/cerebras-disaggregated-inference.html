@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cerebras 解耦推理：GPU 管 prefill、晶圆管 decode，每兆瓦多出 5 倍 token · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Cerebras 解耦推理：GPU 管 prefill、晶圆管 decode，每兆瓦多出 5 倍 token</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://x.com/i/article/2122784080718692352">https://x.com/i/article/2122784080718692352</a></div>
+<h1>Cerebras 解耦推理：GPU 管 prefill、晶圆管 decode，每兆瓦多出 5 倍 token（中文精读）</h1>
+<ul>
+<li>原文：Cerebras launches disaggregated inference（https://x.com/i/article/2122784080718692352）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：并行策略（推理）、解耦推理、推理可观测</li>
+<li>一句话要点：Cerebras 解耦推理已投产：GPU 处理 prefill、CS-3 晶圆系统负责 decode，实测每兆瓦吞吐量是纯 CS-3 配置的 5 倍，token 生成速度不降；11 月 14 日 GPT-OSS-120B 共享端点开启解耦后，曲线从 1 倍直接跃升到 5 倍。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>推理的两个阶段对硬件的要求完全不同：prefill 是算力密集的大矩阵运算，decode 是逐 token 的内存密集型生成。把两者绑在同一批硬件上，prefill 的计算高峰会打断正在流式输出的 decode，decode 的内存等待又浪费算力。解耦推理把两个阶段分到不同的硬件池，各自独立扩容、独立调度。</p>
+<p>Cerebras 的版本是异构解耦：GPU 做 prefill，晶圆级系统做 decode。数字很直接：生产部署里 AMD Instinct GPU 处理提示词、CS-3 生成回复，每兆瓦吞吐量是纯 CS-3 配置的 5 倍，生成速度没有损失。解码的优势来自内存：Cerebras 把几十 GB SRAM 铺在整片晶圆上，SRAM 容量是典型 GB300 GPU 的 350 倍、内存带宽 5,400 倍，权重就放在计算单元旁边，解码每步读数据不用去片外。</p>
+<h2>核心结论</h2>
+<ul>
+<li>容量缺口：2026–2030 年 AI 推理需求预计增长 24 倍，数据中心容量只增长 2.2 倍（高盛研究）。智能体应用（Muse、Copilot、Codex）快速扩张，需要高交互推理，而功率受限的环境要求每兆瓦交付多得多的容量。</li>
+<li>拆分方式：推理负载有多种拆法，包括草稿-目标模型、注意力与前馈网络拆分；把 prefill 与 decode 分开，对高交互推理来说是独特有利的一种。</li>
+<li>解码的物理：解码是自回归的，一次生成一个 token，再把刚生成的 token 当输入去生成下一个；每一步都要重新读模型数据，内存带宽是关键。以 SRAM 为中心的芯片能把数据留在片上、读得更快。</li>
+<li>晶圆级 SRAM：单颗芯片几十 GB SRAM、每秒几十 PB 内存带宽，SRAM 容量 350 倍、内存带宽 5,400 倍（相对典型 GB300 GPU）；系统把更多并发请求与模型层直接装进芯片，CS-3、CS-4、CS-5 以有吸引力的吞吐量跑出超快速度。</li>
+<li>生产结果：AMD Instinct GPU 做 prefill、CS-3 做 decode，实测每兆瓦吞吐量 5 倍，token 生成速度不降；GPT-OSS-120B 共享端点 11 月 14 日 16:00 开启解耦后，曲线从 1 倍跃升到 5 倍。</li>
+<li>部署计划：2027 年底前把解耦推理铺到 Cerebras 推理云与合作伙伴部署的数百兆瓦规模；另有新发布的 CS-4、大幅扩产的制造能力、规划中的 700MW 数据中心容量。</li>
+<li>合作伙伴路线：端到端解耦软件栈（推理框架 + prefill 引擎 + 解码引擎 + KV Portal）或只做解码的 SDK；早期合作伙伴包括 AWS、Fireworks AI、Gimlet Labs、General Compute。</li>
+</ul>
+<h2>逐节要点</h2>
+<h3>超快推理的容量缺口</h3>
+<p>智能体应用正在快速扩张，需要高交互性的推理来留住用户；只加硬件、只提高并发，会拖慢每个用户的 token 生成速度。Cerebras 投资解耦推理：prefill 加速器处理提示词，Cerebras 系统生成回复，每兆瓦 token 吞吐量提高，超快生成速度不变；同样一份功率预算能服务更多客户、创造更多收入潜力。</p>
+<h3>Cerebras 为什么在解码上有优势</h3>
+<p>一次推理请求分 prefill 与 decode 两个阶段。拆分方式从聚合服务演进：GPU 聚合服务 → 草稿-目标模型（草稿模型提议、目标模型验证）→ 注意力与前馈网络拆分 → prefill–decode 解耦（GPU prefill + Cerebras decode），生成速度从慢到快。动画对比：GPU 的权重从片外 HBM 流入计算单元，Cerebras WSE 的权重就放在片上 SRAM 旁边，token 计数从 0 涨到 20；速度取决于权重多快到达计算单元。</p>
+<h3>解耦推理的生产结果</h3>
+<p>生产部署：AMD Instinct GPU 处理提示词，CS-3 系统生成回复；把提示词处理移走，Cerebras 系统把全部服务能力留给回复生成。实测每兆瓦吞吐量 5 倍，token 生成速度不降。GPT-OSS-120B 共享端点曲线：开启解耦前 1 倍，16:00 开启后跃升到 5 倍并维持。</p>
+<h3>面向基础设施合作伙伴的解耦推理</h3>
+<p>合作伙伴按 Cerebras 参考架构部署集群，自选 prefill 加速器与 Cerebras 系统共置于统一网络。端到端软件栈四部分：解耦推理框架（路由请求、管理副本容量与健康）、prefill 引擎（vLLM/SGLang 等开源引擎）、Cerebras 解码引擎、KV Portal（经 RDMA 传 KV 缓存等中间状态）。只做解码的 SDK 适合追求控制权的伙伴：自带框架与 prefill 引擎，另有模拟解码副本等开发辅助。早期合作伙伴：AWS、Fireworks AI、Gimlet Labs、General Compute。</p>
+<h2>局限</h2>
+<ul>
+<li>生产结果来自单一端点（GPT-OSS-120B 共享端点，11 月 14 日一天的曲线），未披露其他模型与负载下的数字。</li>
+<li>解耦引入 KV 缓存跨池传输的开销，文中未量化这部分成本，只说在规模足够大时收益超过成本（背景科普篇的论述，不在本文数据内）。</li>
+<li>350 倍 SRAM、5,400 倍带宽是相对“典型 GB300 GPU”的峰值比较，不是实测 token 速度。</li>
+<li>700MW 数据中心容量与数百兆瓦部署是计划，不是已交付规模。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>按资源需求拆分工作：prefill 算力密集、decode 内存密集，分池后各自独立扩容、独立调度、独立定批策略。</li>
+<li>异构解耦：让每类硬件做最擅长的阶段，而不是同构扩容；解码的瓶颈在权重到达计算单元的速度，SRAM 贴近计算单元是解法。</li>
+<li>生产验证口径：同一端点开关前后的归一化曲线（以聚合基线 1 倍归一化），比孤立峰值数字更有说服力。</li>
+<li>合作伙伴分层：端到端栈（求上市速度）与只做解码的 SDK（求控制权）两条集成路线，KV Portal 是跨池状态传输的关键接口。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
