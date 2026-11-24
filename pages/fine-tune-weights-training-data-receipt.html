@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>微调权重留了训练数据的收据：对比基座就能列出训练词表 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>微调权重留了训练数据的收据：对比基座就能列出训练词表</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://x.com/i/article/2122535802337206274">https://x.com/i/article/2122535802337206274</a></div>
+<h1>微调权重留了训练数据的收据：对比基座就能列出训练词表（中文精读）</h1>
+<ul>
+<li>原文：Your fine-tune's weights keep a receipt for its training data（https://x.com/i/article/2122535802337206274）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：训练确定性 / 训练可观测性</li>
+<li>一句话要点：微调模型与基座对比，没见过的 token 向量逐比特相同，训练数据里出现过哪些词表 token 就能列出来；421 次对比覆盖 580 个模型，229 次核心对比里 97 次能给出可用的 token 清单。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这篇把训练数据的可验证性变成了一件可以算出来的事。发布微调模型时如果同时放出基座，任何人都能列出训练数据里包含过哪些词表的 token：训练从未见过的 token，保留的向量与基座逐比特相同，对比两个文件就能找出来。清单只记录词表、不包含文本，但它已经能回答很多以前只能靠文档相信的问题：公开的数据集是不是真的训了、模型卡写的基座对不对、README 没写的 token 有没有被训练过。</p>
+<p>方法来自 Alapan Chaudhuri 的思路，这次是独立复现与扩展，大量使用 AI 编程智能体，并经过一次内部技术审读。421 次发布与基座的对比覆盖 580 个模型，代码与全部数字公开。训练还留下两道更细的痕迹：Adam 下只在一个训练步里出现过的 token，向量里每个数都平移同一量，大约是学习率的 31.8 倍，相当于它出现时的时间戳；权重衰减把所有没收到梯度信号的向量按同一个精确因子缩小，可以检验猜测的训练策略。</p>
+<h2>核心结论</h2>
+<ul>
+<li>DeepSeek V4 改了六个 README 没写的特殊 token：词表同一区块里的 &lt;｜task｜&gt;、&lt;｜political｜&gt;、&lt;｜entity｜&gt;、&lt;｜safety｜&gt;、&lt;｜answer｜&gt; 和 &lt;｜search｜&gt;，在 V4-Flash 与 V4-Pro 两个版本里以同样方式被改动；&lt;｜political｜&gt; 向量的变化方向与已说明的 authority、domain 分类 token 相近。第三方微调让 11 个 token 全部保持不变。V4.1-Flash 的 10 月更新也改了全部六个。</li>
+<li>DeepSeek R1 的训练从未碰过九个工具 token：V3-Base 的九个工具 token（五个包调用、四个包工具返回）全在随机初始值，R1 与 R1-Zero 全部保持逐比特相同，R1-0528 更新了全部九个。给每个数加 0.000001 也会改变每个向量 7,168 个数里至少 414 个，舍入藏不住这个结论。</li>
+<li>LIMO 公开的 817 条样本复现不了权重：模型里 29,742 个 token 向量变了，公开集合 13,386 个 token 里 13,183 个变了，另有 16,559 个变化的 token 不在公开集合里，其中 5,391 个是中日韩 token，而公开文本只有 46 个中日韩字符。解法在 19 到 76 条样本上不同。</li>
+<li>Reflection-70B 的基座实为 Llama 3：128,256 个 token 向量里 51,241 个与 Llama-3-70B-Instruct 逐比特相同，与任何 Llama 3.1 模型没有一个相同；35 个抽样权重矩阵与 Llama 3 的差异秩至多 256。</li>
+<li>五组公开数据的模型全部一致：s1（16,573 = 16,573）、s1.1（27,154）、Sky-T1（48,015）、Bespoke-Stratos（43,761）、OpenThinker（65,554），数据里的 token 与向量发生变化的 token 逐个相等。权重还证实了 s1.1 的 20,000 token 上限：变化的 token 都在文档前 19,901 位以内。</li>
+<li>229 次核心对比里 97 次能给出可用记录；其余分属六组：仅未用词表槽位逐比特相同（33）、部分记录（25）、每向量全变（6）、与该基座不匹配（31）、无 token 向量变化（5）、绑定嵌入不留记录（32，如 Gemma）。</li>
+</ul>
+<h2>逐节要点</h2>
+<h3>权重怎么记下词表</h3>
+<p>语言模型把文本读成 token，词表里的每个 token 都存了一长串数字，叫向量。训练只在 token 出现在训练文本里时才调整它的向量，从未出现过的 token 保留的向量与基座逐比特相同。Adam 下只在一个训练步里出现过的 token，向量里每个数都平移同一量，在学习率平稳的后期大约是学习率的 31.8 倍，学习率先升后降，平移幅度可以当时间戳。权重衰减在每个训练步把权重缩小一个极小比例，把所有没收到梯度信号的向量按同一个精确因子缩小，可以检验猜测的训练策略。</p>
+<h3>DeepSeek V4：README 没写的六个特殊 token</h3>
+<p>V4 编码 README 描述了五个辅助任务 token（action、query、authority、domain、title），权重与 README 在这五个上一致。同一区块还有六个没写的 token，英文和中文搜索都没有公开讨论。自己验证的办法是在 tokenizer.json 里查 id 128,829 到 128,839（11 个 token 连续），再逐个对比基座与发布版的向量。三点注意：只检验了向量有随机初始值的整体大小、没确认确切初始数字，不能排除预训练轻度使用；不能排除小幅刻意修改；权重不说明任务是什么。给用户提示做安全分类是常规做法，Meta 的 Llama Guard 就是专门做这件事的独立模型，不寻常的只是这些 token 被更新了却没写进文档。</p>
+<h3>DeepSeek R1：训练从未碰过工具 token</h3>
+<p>V3-Base 九个工具 token 全在随机初始值，五个版本处理不同：V3 更新调用 token、不动输出 token；V3-0324 两边都更新；R1 与 R1-Zero 两边都不动；R1-0528 两边都更新。R1 论文在局限里列出 R1“不能用搜索、计算器这类工具”，R1-0528 的发布说明把函数调用列为新增支持。权重只能说明 R1 的训练没用工具 token，单凭权重不能说明 R1 是否能用别的方式调工具，对 R1，这个问题由论文定论。</p>
+<h3>LIMO：公开的 817 条样本复现不了权重</h3>
+<p>仓库早期版本还留着优化器的保存状态，证实变化的向量确实收到了真实梯度，是一次与公开规模相近的训练。问题与公开的一致，解法在 19 到 76 条样本上不同：按论文 16,384 个 token 算是 61 条，按发布当天配置 32,768 算是 76 条。小幅修改不可能产生这么多新 token，不同样本的训练文本一定与公开文本很不一样。那段文本是什么、为什么不同，目前不知道；这些都不能说明训练用了测试题。</p>
+<h3>Reflection-70B 与 OLMo 2</h3>
+<p>Reflection-70B 是 2024 年就有人报告过的发现，这次逐项确认。OLMo 2 首个指令微调版本里 23,064 个 token 与基座逐比特相同，其中 20,878 个出现在训练数据里，关闭每个对话角色标记的 token 出现了 2,389,430 次，重训版本里这个数字是 2,802。模型卡说后训练模型“与基座模型用的预切分逻辑不同”，没提权重，权重里记下了这次错配。</p>
+<h3>三张模型卡写错了基座</h3>
+<p>WebWorld 的模型卡把三个尺寸的基座都写成 Qwen3-8B，README 写的是 8B、14B、32B，权重也这么说，模型卡元数据像是 8B 那条的复制。Qwen-AgentWorld-35B-A3B 的模型卡写基座 Qwen3.5，但与 Qwen3.6-35B-A3B 共享 614 个可训练 token 向量，与 Qwen3.5 只共享 13 个，权重只能识别出一个家族。MemT-1.0-Flash 的模型卡写 DeepSeek-V4-Flash，最接近的公开起点是更晚的 V4-Flash-0731，共享 16,806 个向量，与最初版本只共享 82 个，模型卡可能写的是模型家族。</p>
+<h3>Qwen3 的图像 token，和一次读过头的词表</h3>
+<p>Qwen3-8B 与 Qwen3-14B 让同样的 11 个图像、视频与定位 token 与基座保持逐比特相同，只差权重衰减的均匀收缩，两者都更新了全部 15 个对话、工具、思考与代码 token，与纯文本后训练一致。R1-Zero 里 8.0% 的 token 向量逐比特相同，另外 61.5% 变化不到 10%，起初以为说明训练数据很窄，这个推断超出了证据；AI2 的 Olmo-3 RL-Zero 模型公开纯强化学习配方，同样变化很轻（53.6% 与 91.9%）。几乎没变的向量可能来自强化学习、低学习率或窄数据，这个度量分辨不出是哪一种。</p>
+<h3>词表清单为什么可信</h3>
+<p>五组训练数据公开的开源推理项目，数据里的 token 与向量发生变化的 token 逐个相等。数数据集里的 token 要按训练实际处理文本的方式准备：文档在某个长度上限处截断，前面放系统提示；每组匹配只在项目写明的设定下成立，测试过的其他组合都不成立，唯一的例外是 s1（文档比 16,384 短）。写明的设定来自 s1 的训练脚本（块大小 32,768）、s1.1 的 README（20,000）、Sky-T1 的训练配置（截断 16,384，带数据集系统提示）与 OpenThinker 的配置（截断 16,384，带框架默认提示）。</p>
+<h3>错误的数据长什么样</h3>
+<p>拿每个模型去对另一份公开数据集打分时，166 到 49,147 个 token 对不上；随机去掉 1% 的文档会少掉 60 到 104 个 token；多加一篇文档通常不带来新 token，清单相等排除不了少数多余文档。Tulu 3 405B 的监督训练阶段更新了公开数据 124,572 个 token 中除 245 个以外的全部，偏好微调阶段不以这种方式匹配；WebWorld 更新了 52 GB 数据集词表的 99.0%，32B 在词表以外更新了 2 个 token。Arete-27B 与公开回答匹配，63,900 个 token 里更新了 63,392 个，结合 Nous Research 公布的 token 计数，权重与“把纯文本首尾相接训练，不加分隔对话轮次的标记”一致。</p>
+<h3>没有词表清单的地方，和几处复现偏差</h3>
+<p>Gemma 这类绑定嵌入的模型把输入与输出的 token 向量放在同一个矩阵里，不留记录。LoRA 只训练附加的小矩阵，用在其他层时不动 token 向量，消除拒绝回答的编辑也是如此；32 次涉及 2026 年流行微调的对比里 13 次没有记录。16 位发布抹掉极小变化，时间戳活不过 16 位发布，16 位发布藏住 0.2% 以下的权重衰减总收缩；每向量全变永远不能说明每个 token 都在数据里。恢复训练策略在自家 round 参数的运行上可行，非 round 参数只复现了一部分；改写的工具在 4 次盲测里恢复了 2 次，另外 2 次标记出来而不是猜错；按文档的结果（某篇文档在哪一步用过、文档是否被换过、某篇文档是否在训练数据里）比原帖弱。</p>
+<h2>局限</h2>
+<ul>
+<li>清单只记录词表、不包含文本；多余的数据是弱点，多加一篇文档通常不带来新 token，清单相等排除不了少数多余文档。</li>
+<li>方法在绑定嵌入（Gemma）、LoRA、16 位发布下不留记录或记录被抹掉；229 次核心对比里只有 97 次能给出可用记录。</li>
+<li>权重不说明任务是什么：V4 六个未说明 token 的具体分类任务、LIMO 不同样本的训练文本是什么、为什么不同，目前都不知道。</li>
+<li>更难的结果只复现了一部分：非 round 参数的训练策略恢复、按文档的结果都比原帖弱。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>逐比特对比：微调模型与基座逐 token 向量对比，没见过的 token 向量逐比特相同，直接列出训练数据里出现过的词表 token。</li>
+<li>Adam 单步平移当时间戳：只在一个训练步里出现过的 token，向量里每个数平移同一量（约 31.8 倍学习率），平移幅度对应出现的时间。</li>
+<li>权重衰减收缩验策略：没收到梯度信号的向量按同一个精确因子缩小，可以检验猜测的训练策略。</li>
+<li>数据集 token 计数口径：按训练实际处理文本的方式准备（截断上限 + 系统提示），匹配只在项目写明的设定下成立；s1.1 的 20,000 上限可用 19,901 / 20,022 的位置边界验证。</li>
+<li>证伪清单：公开数据集与权重对不上（LIMO）、模型卡基座写错（Reflection-70B、WebWorld）、README 没写的 token 被训练（DeepSeek V4），都可以用同一套对比找出来。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
