@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepCrossAttention：把残差连接改成动态路由 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>DeepCrossAttention：把残差连接改成动态路由</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://research.google/blog/supercharging-transformer-residual-connections/">https://research.google/blog/supercharging-transformer-residual-connections/</a></div>
+<h1>DeepCrossAttention：把残差连接改成动态路由</h1>
+<ul>
+<li>原文：<a href="https://research.google/blog/supercharging-transformer-residual-connections/">Supercharging transformer residual connections</a>（Google Research，2026-11-23）</li>
+<li>论文：<a href="https://arxiv.org/abs/2502.06785">DeepCrossAttention: Supercharging Transformer Residual Connections</a>（ICML 2025）</li>
+<li>主题：架构、残差连接、训练效率</li>
+<li>星级：⭐⭐⭐⭐（重点阅读）</li>
+<li>一句话要点：DCA 把残差连接从等权逐点相加改成逐 token 动态路由：每层用可学习混合权重与深度交叉注意力按需回看前面各层的特征；同等质量下训练最多快 3 倍，LM1B 上 30 层达到比 42 层标准模型更低的困惑度，参数只增加不到 0.2%。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>标准残差连接是逐点相加：层输出与输入等权相加，计算高效，但所有先前表示被一视同仁，深层网络里早期层的高分辨率细节会被平均掉或失真，网络只能重算，学习效率降低。</li>
+<li>DCA 把残差学习重构成动态路由问题：不再让所有先前层等权前传，而是引入轻量、逐层的模块，按 token 决定如何组合先前的表示。</li>
+<li>两类机制：动态层路由（每个 token 一组混合权重，静态可学习基底加输入相关投影）；深度交叉注意力（拆分 Q/K/V，沿深度对前面各层做注意力，而不是在序列内跨 token 做注意力）。</li>
+<li>实验：C4 与 LM1B 上达到标准 Transformer 的性能最多只需五分之一的训练步数；LM1B 困惑度低于 14 时，固定宽度的标准 Transformer 需要 42 层，DCA 只用 30 层就达到更低的困惑度，深度与参数量减少 29%。</li>
+<li>代价极小：参数只增加不到 0.2%，计算与内存开销可忽略；DCA 可以初始化成与标准残差网络完全一致的行为，改装已预训练 Transformer 继续短暂训练，LM1B 困惑度降低 0.19，而标准继续训练只降低 0.02。</li>
+</ul>
+<h2>标准残差连接的问题：等权相加把细节平均掉</h2>
+<p>博客用传话游戏打比方：数据一层层往下传，每层都改一点信息，网络有几十上百层时，最初的学习信号传到后面会严重退化甚至丢失，这就是梯度消失问题。残差连接是解法：原始输入的副本跳过复杂层，直接加到该层输出上，相当于一条信息高速公路，模型始终能参考原始数据。</p>
+<p>但标准残差连接的操作是逐点相加，对所有先前表示等权处理。特征沿层数传播时，早期层特有的高分辨率细节会被平均掉或失真，网络难以按需取回，只能重算。ICML 2025 的论文研究了这个短板，提出 DCA：让每一层动态选择并路由前面各层的特征，按需取用，达到相当或更好的学习效果，参数量最多减少 30% 到 40%。</p>
+<h2>两类机制</h2>
+<p><strong>动态层路由</strong>：每个 token 处理时，DCA 用静态可学习基底结合输入相关投影，算出一组唯一的混合权重。网络据此自适应调整处理结构，按 token 的具体上下文在纯串行与全并行之间切换。</p>
+<p><strong>深度交叉注意力（拆分 Q/K/V）</strong>：标准 Transformer 注意力在序列内跨 token 计算，DCA 的注意力沿深度跨层计算。每个 token 查询前面所有层表示的动态加权混合，无需承担扩展传统注意力的计算代价，就能解锁模型的全部历史上下文。</p>
+<p>两类机制合起来，让网络动态选择并取回早期层的高分辨率特征，消除了经典残差连接固有的信息稀释。</p>
+<h2>实验数字</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>标准 Transformer</th>
+<th>DCA</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>达到同等性能所需训练步数（C4/LM1B）</td>
+<td>基准</td>
+<td>最多只需五分之一</td>
+</tr>
+<tr>
+<td>LM1B 困惑度低于 14 所需层数</td>
+<td>42 层</td>
+<td>30 层（困惑度更低）</td>
+</tr>
+<tr>
+<td>深度与参数量</td>
+<td>基准</td>
+<td>减少 29%</td>
+</tr>
+<tr>
+<td>参数增加</td>
+<td>—</td>
+<td>不到 0.2%</td>
+</tr>
+<tr>
+<td>改装已预训练模型继续训练（LM1B 困惑度变化）</td>
+<td>−0.02</td>
+<td>−0.19</td>
+</tr>
+</tbody>
+</table>
+<p>图 3 的两组对照（LM1B 6 层约 50M 参数、C4 13 层约 179M 参数）里，DCA 的困惑度低于标准 Transformer 与 LAUREL-PA、1x1-DenseFormer、Hyper-Connections 等对照基线：LM1B 上 Transformer 18.98、DCA 18.06；C4 上 Transformer 21.534、DCA 20.392。</p>
+<p>连接历史 k 的影响（图 4）：k 从 1 增加到 24，困惑度从标准 Transformer 的 15.14 降到 14.35；但收益很快趋平——1-DCA 14.48、2-DCA 14.41、4-DCA 14.50、8-DCA 14.49，16-DCA 与 24-DCA 都是 14.35。k 超过 2 之后基本不再下降，说明路由连接数不用贪多。</p>
+<h2>同类工作：动态残差路由正在成为趋势</h2>
+<p>博客最后把 DCA 放进三则同类工作里，说明动态残差路由是一个活跃方向：</p>
+<ul>
+<li><strong>注意力残差（Moonshot AI）</strong>：与 DCA 共享核心思想，用选择性取回替代固定加法。每一层用可学习 softmax 注意力机制配一个层专属伪查询，选择性加权并取回早期深度的表示。防止隐状态无界增长与早期层信息稀释，改善梯度稳定性，提升代码与数学等推理密集任务的质量。Block AttnRes 变体把层分块，在内存开销小得多的情况下恢复全注意力的收益。Thinking Machines 的 Inkling 2 模型也采用了这一设计，以及 DCA 的交叉注意力（Q/K/V 拆分）机制。</li>
+<li><strong>超连接（Hyper-connections）</strong>：把残差流扩展成多个并行通道，提供超越单纯加宽模型宽度的记忆扩展方式。层输出用固定尺寸堆栈聚合，再用可学习混合矩阵混合。但无约束混合破坏了传统残差连接的恒等映射性质，信号可能放大或衰减，大规模训练时导致不稳定。</li>
+<li><strong>流形约束超连接</strong>：为解决标准超连接的不稳定，对混合矩阵施加约束，强制矩阵落在特定流形上，具体做法是约束为双随机矩阵，用 Sinkhorn-Knopp 算法实现。约束恢复了稳定的信号传播，防止梯度爆炸或消失，同时保留加宽残差流的丰富信息流与表达力，让模型稳健扩展。</li>
+</ul>
+<h2>值得注意的点</h2>
+<ul>
+<li>DCA 增加的参数不到 0.2%，但内存带宽反而上升：各层表示完整呈现而非混合到一起，带宽侧要留余量。</li>
+<li>改装路径是亮点：DCA 可以初始化成与标准残差网络完全一致的行为，接到已预训练 Transformer 上继续短暂训练就有收益（LM1B 困惑度 −0.19），不用从头训练。</li>
+<li>k 的收益曲线提示：路由连接数不是越多越好，2-DCA 已拿到大部分收益，16 与 24 持平。</li>
+<li>博客没有给出图像分类任务的具体数字，实验部分以语言建模为主。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
