@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HLS基准：智能体36小时从零搭建推理系统，Opus 5七成跑赢基线 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>HLS基准：智能体36小时从零搭建推理系统，Opus 5七成跑赢基线</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://hlsbench.com/blog/introducing-hls/">https://hlsbench.com/blog/introducing-hls/</a></div>
+<h1>HLS 基准：智能体 36 小时从零搭建推理系统，Opus 5 七成跑赢基线（中文精读）</h1>
+<ul>
+<li>原文：Introducing Humanity's Last System（https://hlsbench.com/blog/introducing-hls/）</li>
+<li>收藏：2026-11-24</li>
+<li>主题：AI Agent / 推理系统构建</li>
+<li>一句话要点：HLS 是超长程智能体编码基准，智能体在 live GPU 沙箱里从零搭建高度特化的推理系统；Opus 5 在 71% 的运行里跑赢生产基线，其余智能体不超过 24%，差距在架构选择、实测对比与故障诊断这三处工程习惯。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这篇把「智能体能不能做系统工程」变成可度量的基准。任务不是写一个内核、改一段代码，而是在最多 8 块 H200、最长 36 小时里，从零搭出针对模型、硬件与负载高度特化的完整推理栈：内核、显存管理、调度、并行一起设计、集成、剖析、测试。153 次 rollout、中位 1,213 步、82.6 万 token 的轨迹全部公开，性能收益从哪里来、智能体如何搜索，两边第一次能对上账。</p>
+<p>值得读的另一点是验证器设计：token 级验证器在每个 token 上对照可信参考检查输出分布，容忍内核实现与批量不确定性带来的数值差异；只比答案的端任务精度会漏掉 rollout 里见到的许多有缺陷的服务器。评分按相对生产基线的提速算，正确性失败得 0 分，vLLM 基线用出厂默认。</p>
+<h2>核心结论</h2>
+<ul>
+<li>Opus 5 领先：81% 的运行产出正确系统，71% 跑赢基线，7 个任务里 6 个最高提速；语音识别 25.87×、全模态对话 4.92×、语音合成 2.40×。其余智能体跑赢基线均不超过 24%（Kimi K3 23.8%、Opus 4.8 19.0%、GLM 5.3 14.3%、GPT 5.6 Sol 9.5%、GPT 5.5 0%）。</li>
+<li>全体：48% 的运行通过正确性，23% 超过基线；智能体编码最难，只有 33% 通过，最好成绩 0.985×。</li>
+<li>预算：24 小时下 5 次 Opus 5 运行在通用服务上全部通过且跑赢基线，几何平均提速 1.97×（12 小时为 1.46×）；36 小时升到 2.24×（+14%），单次成本 664 美元到 900 美元（+36%），5 次中 1 次失败。</li>
+<li>成本：Opus 5 单次 402 美元对 Kimi K3 254 美元，但每个有效成果成本 560 美元对 1,070 美元；Opus 4.8 单次 418 美元、超基线 19%；GPT 5.5 平均 273 美元、一次也没有。</li>
+<li>加速来源：前缀复用 19% 升到 39%、投机解码 ×1.64、前缀复用 ×1.27，0.92× 到 1.91×；CUDA 图捕获 326 个内核一张图，关掉任一捕获回复延迟约 4.3×。</li>
+<li>四个发现：重大设计决策做得早、很少实测对比替代方案；建出正确且更快系统的智能体提速估计更准；多数失败运行早已遇到同样或相关的错误却未解决根本问题；较弱的智能体尽管被放在 Ralph 循环里仍早早停止推进。</li>
+</ul>
+<h2>逐节要点</h2>
+<h3>基准设计</h3>
+<p>任务覆盖文本、智能体与多模态服务，用生产负载与 trace，在 1–8 块 H200（NVLink 互联）上跑。智能体编码任务为 GLM-5.3-Flash 在 8 块 H200 上搭建推理栈，支持最长 1M token 上下文，Terminal-Bench 4 作负载。前缀复用最难：GLM-5.3-Flash 把 DSA 注意力缓存与 KDA 可变循环状态结合，KDA 每 token 原地更新循环状态，长度 L 的缓存状态不能复用于更短的匹配前缀。并行上 TP+EP 复制 DSA 状态，TP+DCP 切分注意力缓存、通信代价更高。</p>
+<h3>验证器与评分</h3>
+<p>任务级验证器必须完全覆盖目标下游负载：Opus 5 的 ASR 提交缩短 Whisper 零填充编码器窗口，改了一些转录结果，仍在转录准确率容忍范围内。通用文本服务里 token 级验证器改为检查计时负载下发出的 token，对提交的轨迹用参考做 teacher forcing；容忍度从 vLLM、SGLang、vLLM-Omni 的可信实现上校准。流式任务取 TTFT、TPOT 各除 SLO 的较大比值，非流式测 JCT，几何平均后除基线，1× 等于基线。</p>
+<h3>结果</h3>
+<p>Opus 5 运行平均空闲 2%，最后一次代码编辑通常在 9.6 小时，之后继续测试；Opus 4.8 平均空闲 25%，中位 6.2 小时；GPT 5.6 Sol、Kimi K3 与 GLM 5.3 一般编辑到最后 1–2 小时。智能体编码任务里 vLLM 基线 tp=8、ep=8。</p>
+<h3>加速来自哪里</h3>
+<p>通用服务里 vLLM 给注意力与循环状态共用显存池，前缀复用只能到粗粒度边界；Opus 5 把循环状态检查点做得更细，复用份额从 19% 升到 39%，再启用多 token 预测头做投机。语音识别里新音频到达把基线解码器逼出 CUDA 图，提交把接纳与解码分别捕获；只优化解码不够，高效解码路径仍会被昂贵的请求接纳打断。内核级基准测不到这些服务效应。</p>
+<h3>发现 1：重大决策做得早</h3>
+<p>第一个设计决策是服务引擎本身：从零写前向、解码循环与请求调度，还是围绕 transformers.generate 这类库路径搭服务器。中位 13 分钟，大多凭任务描述推理或凭默认；只有 8% 用实测对比，84% 的情况里选中的办法已经在第一个能跑的服务器里。78% 通过运行里最大的一次改进来自调度、批处理、投机、状态复用、GPU 布局或图捕获。较快与较慢的一半实测对比替代方案的比例相近（35% 对 38%），选更有分量的实验比单纯多跑实验更重要。CPU 分发上三例失败：Opus 4.8 的 torch.compile 比 eager 还慢、GPT 5.6 Sol 的卷积缓存变更、Kimi K3 测出 2.73× 却在一次挂起后丢掉改动。</p>
+<h3>发现 2：提速估计更准</h3>
+<p>126 次主运行里 99 次有可比度量，自估除以评分提速的中位比值：正确且高于基线 1.07，正确但低于基线 1.76，失败 4.18。短测试藏住队列堆积，截断输出减少解码工作，重复请求抬高缓存命中率。复现规定到达的运行通过率 66%，否则 22%；真实响应长度、与评分负载等长的负载测试、干净签出验证也有类似关联。</p>
+<h3>发现 3：失败早已见过</h3>
+<p>65 次失败的主评估运行里，85% 的开发日志已经出现同样的失效机制或密切相关的一种。78% 的智能体第一次回应是无视异常或只修出现问题的那一处，5% 调查原因并检查相关站点，其余 17% 没有记录相关警告、证据不足或回应无法分类。</p>
+<h3>发现 4：早早停止推进</h3>
+<p>几次 Opus 4.8 语音运行在三到四小时后宣称遇到硬件上限，带着正确的服务器空闲六到八小时，同期 Opus 5 在同样的任务上又找到 10–30% 的收益。通过的运行里第四小时后保留的优化带来 6–13% 的中位收益。GPT 5.5 平均空闲 10%，近一半来自一次 omni 运行：提交后约半小时停下，睡了十一个多小时耗完预算。</p>
+<h3>结论</h3>
+<p>如果现在就用智能体搭建高度特化的推理栈，三条建议：在有代表性的负载下测试；在架构设计里鼓励以剖析驱动决策；彻底、深入地诊断故障。评估框架与轨迹已经发布，干预措施的效果可以直接测出来。</p>
+<h2>局限</h2>
+<ul>
+<li>智能体编码仍是最难的任务，只有 33% 的运行通过，最好成绩 0.985×，还没有智能体在这个任务上跑赢基线。</li>
+<li>评估成本不计在开发成本里；更强、更贵的智能体更经济的结论只覆盖开发支出。</li>
+<li>发现来自 153 次 rollout 的回顾分析，干预措施（代表性测试、剖析驱动决策、系统性调试）是否生效尚未验证。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>token 级验证器：对照可信参考检查输出分布、容忍数值差异，比只比答案的端任务精度更能抓住有缺陷的服务器。</li>
+<li>评分口径：流式取 TTFT、TPOT 各除 SLO 的较大比值，非流式测 JCT，几何平均后除基线；1× 等于基线。</li>
+<li>剖析驱动决策：提交设计前实测替代方案，避免把预算花在调优糟糕的初始选择上。</li>
+<li>故障诊断协议：诊断每个观测到的异常，用覆盖相关输入、代码路径与并发会话的回归测试验证修复。</li>
+<li>停止规则：按剩余实验设停止条件，而不是让运行空转耗完预算。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
