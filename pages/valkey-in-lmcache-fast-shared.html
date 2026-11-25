@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Valkey 进 LMCache：RDMA 搬运 KV 缓存，4 线程跑满 200 Gbit/s 线速 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Valkey 进 LMCache：RDMA 搬运 KV 缓存，4 线程跑满 200 Gbit/s 线速</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://blog.lmcache.ai/en/2026/11/19/valkey-in-lmcache-fast-shared-memory-fabric/">https://blog.lmcache.ai/en/2026/11/19/valkey-in-lmcache-fast-shared-memory-fabric/</a></div>
+<h1>Valkey 进 LMCache：RDMA 搬运 KV 缓存，4 线程跑满 200 Gbit/s 线速（4⭐，拟 No.125）</h1>
+<ul>
+<li>原文：https://blog.lmcache.ai/en/2026/11/19/valkey-in-lmcache-fast-shared-memory-fabric/（LMCache 官方博客，2026-11-19）</li>
+<li>收藏：2026-11-25</li>
+<li>主题：KV 缓存、并行策略（推理）、RDMA</li>
+<li>一句话要点：LMCache 的 valkey L2 适配器新增 RDMA 传输，Valkey 节点经 EFA 把 KV 缓存块直接移入、移出 LMCache 的 L1 场，两端零拷贝，4 个线程在 4 MiB 块上打满 200 Gbit/s 线速。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是共享 KV 缓存从 TCP 走向 RDMA 的完整工程实录：不只给了一个开关，而是把控制面与数据面拆开、把信任边界、注册上限、安全护栏与故障处理全部算清楚，再用 lmcache bench l2 在同一硬件上把 RDMA 与 TCP 逐档对比。结论干净：瓶颈不在网卡，而在逐字节拷贝与套接字开销；单 TCP 线程无论负载多大都卡在约 10 Gbit/s，RDMA 把字节成本从瓶颈变成了可选项。对正在搭建跨机共享 KV 层的推理团队，这篇是直接可抄的配置与容量规划手册。</p>
+<h2>核心结论</h2>
+<ul>
+<li>两条通道：控制面走 TCP 上的 RESP（BLOB.RDMA_HELLO 建会话，存储/加载/查找/删除命令），数据面走 EFA 上的 RDMA；存储或加载只给 L1 场中的一段窗口命名为（rkey、地址、长度）三元组，从不携带负载本身。</li>
+<li>Valkey 节点发起每一次传输：存储时织物引擎从窗口读块，加载时向窗口写值；LMCache 从不寻址节点内存，信任边界留在 Valkey 节点上。</li>
+<li>适配器改动极小：transport 设为 rdma 后只换工作线程池，线程、批处理、部分失败记账、集群模式、线上键名与逐出全部照旧；唯一不继承的是已存数据（大对象模块用自己的数据类型，须用独立 key_prefix 或独立节点）。</li>
+<li>L1 场注册一次：每线程启动时注册整个场，不拷贝、不改所有权；32 GiB 场注册约 50 毫秒（透明大页）或 0.5 秒（4 KiB 页）；须按 num_workers × l1_size_gb 对照 EFA 注册上限（c8gn.16xlarge 384 GiB，g6.8xlarge 96 GiB）。</li>
+<li>安全护栏：写入前尺寸检查、CRC32C 校验命中、无回复失败时撤销区域并重试一次、关闭时先关客户端再关区域、缺件时启动即快速失败。</li>
+<li>Valkey 节点内分层：DRAM 模式最快；分层模式写 NVMe 文件（io_uring + O_DIRECT），DRAM 作读缓存，反复访问后按 promote-min-hits 晋升，写满按 LFU 丢最冷副本。</li>
+<li>实测（两台 c8gn.16xlarge，各一块 200 Gbit/s EFA，lmcache bench l2，32 键/提交）：4 线程在 4 MiB 与 16 MiB 块上存储与加载双双约 200 Gbit/s；同等线程数下 RDMA 存储最高快 8.0 倍、加载最高快 6.0 倍；单 TCP 线程卡在约 10 Gbit/s；单 RDMA 线程从 256 KiB 的 14.9 Gbit/s 爬到 16 MiB 的约 130 Gbit/s。</li>
+<li>延迟同样说明问题：4 线程加载从 4 MiB 到 16 MiB，p50 从 22.2 毫秒升到 86.8 毫秒而吞吐不变，额外延迟来自饱和链路排队，而非传输变慢。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>要点速览：Valkey for Context Memory 的定位与 headline 数据。</li>
+<li>为什么需要共享 KV 层：本地层绑定单节点的三种丢失情形；Valkey TCP 层与 Momento 实验（30 文档全复用，5.97 倍加速）；大块字节成本与单 TCP 线程约 10 Gbit/s 上限。</li>
+<li>两条通道：控制面 RESP + 数据面 RDMA；节点发起传输的信任边界。</li>
+<li>各组件分工：LMCache MP 模式、valkey 适配器、GLIDE 同步客户端、大对象模块、织物引擎。</li>
+<li>LMCache 内部：传输选项、场注册、窗口换算（offset/window 两行）、传输命令表、安全与故障处理五条。</li>
+<li>DRAM 与 NVMe 分层：DRAM 模式与分层模式（晋升、LFU、NVMe 可见性与有界暂存）。</li>
+<li>吞吐对比：测试方法、存储与加载两张 8 行实测表、线程与块大小两维解读、延迟分析。</li>
+<li>上手试用：前置条件、Valkey 启动（DRAM/分层两套命令）、LMCache 接入、TCP 迁移、容量规划、验证方法、无 EFA 开发（Emulated + tcp 提供方）。</li>
+<li>当前限制：EFA 唯一验证路径、不直通 GPU 显存、场外无 TCP 回退、serde 包装丢零拷贝、只读主节点、复制与故障转移不继承、NVMe 驻留不等于重启持久、ttl_seconds 每次多一次往返。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>实测只在 DRAM 模式、两台 c8gn.16xlarge、单 EFA 上进行，分层模式的吞吐与延迟未给出数字。</li>
+<li>70B 模型 TP=8 的约 10 MiB 块在图中以虚线标记，未实际测量。</li>
+<li>表中只列 1 与 4 线程结果，8 与 16 线程的完整数据未公开（正文只给结论：TCP 存储峰值 26 Gbit/s 在 4 线程，加载峰值 62.5 Gbit/s 在 8 线程）。</li>
+<li>复制、故障转移与重启持久性明确不在本次实现范围内，生产部署须另行规划。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>共享 KV 层上 RDMA 的正确分工：命令走 RESP，字节走 RDMA；服务端发起传输，把信任边界留在服务端。</li>
+<li>容量规划公式：num_workers × l1_size_gb 对照 EFA 注册上限，算错启动即报错指明方向。</li>
+<li>迁移策略：RDMA 与 TCP 缓存用独立 key_prefix 或独立节点，不混用。</li>
+<li>测量方法：lmcache bench l2 直接驱动 L2 适配器，32 键/提交、在途提交数等于 num_workers，transport 是唯一变量。</li>
+<li>无硬件开发路径：fabric-provider Emulated + rdma_provider tcp，用 libfabric TCP 提供方走通同样代码路径。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
