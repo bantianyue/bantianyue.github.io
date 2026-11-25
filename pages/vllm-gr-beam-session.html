@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vLLM-GR：一次请求内跑完 beam 搜索 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>vLLM-GR：一次请求内跑完 beam 搜索</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://vllm.ai/blog/2026-11-24-vllm-gr-announcement">https://vllm.ai/blog/2026-11-24-vllm-gr-announcement</a></div>
+<h1>vLLM-GR：一次请求内跑完 beam 搜索，候选路径共享用户历史 KV（中文精读）</h1>
+<ul>
+<li>原文：Announcing vLLM-GR: Efficient Inference for Generative Recommendation（https://vllm.ai/blog/2026-11-24-vllm-gr-announcement）</li>
+<li>收藏：2026-11-25</li>
+<li>主题：推理优化、并行策略（推理）、KV 缓存</li>
+<li>星级：⭐⭐⭐⭐（重点阅读）</li>
+<li>一句话要点：vLLM-GR 把生成式推荐的多路候选搜索做成 EngineCore 里的一次 beam session：候选路径共享缓存的用户历史 KV，每步在加速器上做 beam 选择并用父路径下标读后缀 KV，主机在设备执行当前阶段时准备下一阶段，形成 PDD 流水；beam 宽度 256 时 batch 4 与 8 的 P99 在 6 块加速器上都是所列后端里最低。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>生成式推荐把推荐问题改写成生成问题：根据观众历史，模型逐 token 生成候选物品的语义 ID（SID）。难点不在单条生成，而在一次请求要探索很多条候选路径、又要在延迟预算里返回。vLLM-GR 的解法是把整场搜索收进引擎：一次 beam session 管到底，候选路径共享同一份用户历史 KV，beam 选择与后缀 KV 读取都在加速器上完成，主机与设备用 PDD 流水重叠。机制、架构图、6 卡实测三部分都全，读完就能理解推荐推理与普通 LLM 服务在调度上的差别。</p>
+<h2>核心结论</h2>
+<ul>
+<li>beam session 是核心抽象：整个搜索由 EngineCore 里的一次会话管到底，记录候选路径怎么分叉；调度器把 prefill 与 decode 阶段发给 worker，每步模型 runner 给下一个 token 打分，beam 选择记录每条存活路径的分数与父路径，下一次解码用父路径下标读到正确的 KV 状态。</li>
+<li>候选路径共享用户历史 KV：跨 beam 共享 prompt KV，不用给每个候选复制一遍观众历史；第二次解码继承被选父路径的后缀 KV（suffix KV）。</li>
+<li>PDD 流水重叠准备与执行：加速器执行当前阶段时，主机准备下一阶段。prefill 给第一个 SID 分量打分的同时主机准备 decode 1；decode 1 执行期间主机准备 decode 2。</li>
+<li>目录约束保证搜出来的 ID 能上架：搜索可限制在物品目录里的语义 ID，无效 SID 前缀直接丢掉（例子：A1 · B1 被过滤，因为没有物品以这个前缀开头）；全词表搜索跳过这层过滤。</li>
+<li>接口三选一：离线 Python 接口、OpenAI 兼容 HTTP、gRPC；一次响应返回候选序列与分数。每阶段 beam 宽度与每父路径候选上限可调，探索的 partial ID 比最终返回的更多。</li>
+</ul>
+<h2>架构：三色分工</h2>
+<ul>
+<li>蓝色是复用的 vLLM 组件：HTTP 入口、模型前向等。</li>
+<li>黄色是 EngineCore 调度与 worker 执行的扩展。</li>
+<li>粉色是 vLLM-GR 新增部分：离线与 gRPC 入口、beam session、BeamAttn、后缀 KV，以及目录约束与全词表两种 beam 选择。</li>
+</ul>
+<p>一次请求的例子：beam 宽度按 2 → 3 → 2 走，返回两个候选。目录过滤掉 A1 · B1，SID 与分数只是示例。</p>
+<h2>实测数字（P99 延迟）</h2>
+<p>基准在 4 块 NVIDIA GPU（H20、RTX PRO 6000、A100、L20）与 2 块昇腾 NPU（A2、A5）上跑 OneRec-1.7B（BF16），生成 3 个 token。两张总览图把输入长度固定在 1,024 token，比较 beam 宽度 256 与 128、batch 1、4、8。各图汇总的是计时定义、样本数与后端设置各不相同的独立基准运行；RTX PRO 6000 那次是 3 次预热后 48 个计时 batch 的整 batch P99，计时含把候选 ID 与分数返回主机、不含 HTTP；vLLM-GR 与 NVIDIA SID-GR 用候选池 K 等于 beam 宽度 W，SGLang Beam 用原生 2W 候选池。</p>
+<table>
+<thead>
+<tr>
+<th>配置</th>
+<th>vLLM-GR</th>
+<th>对照</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H20，beam 256，batch 8</td>
+<td>369.4 ms</td>
+<td>SGLang 1,280.1 ms，NVIDIA SID-GR 428.1 ms</td>
+</tr>
+<tr>
+<td>H20，beam 256，batch 4</td>
+<td>约 191 ms</td>
+<td>NVIDIA SID-GR 约 191 ms</td>
+</tr>
+<tr>
+<td>RTX PRO 6000，beam 256，batch 1</td>
+<td>29.21 ms</td>
+<td>NVIDIA SID-GR 28.25 ms（SID-GR 更快）</td>
+</tr>
+<tr>
+<td>RTX PRO 6000，beam 256，batch 8</td>
+<td>274.5 ms</td>
+<td>NVIDIA SID-GR 451.5 ms</td>
+</tr>
+<tr>
+<td>A100，beam 256，batch 8</td>
+<td>474.3 ms</td>
+<td>NVIDIA SID-GR 790.7 ms</td>
+</tr>
+<tr>
+<td>A2，beam 256，batch 8</td>
+<td>151.7 ms</td>
+<td>xLLM 324.60 ms</td>
+</tr>
+<tr>
+<td>A2，beam 128，batch 8</td>
+<td>128.2 ms</td>
+<td>所列后端里最低</td>
+</tr>
+</tbody>
+</table>
+<p>规律：beam 宽度 256 时，batch 4 与 batch 8 下 vLLM-GR 的 P99 在 6 块加速器上都是所列后端里最低；batch 1 时 NVIDIA SID-GR 在个别卡上更快（RTX PRO 6000 上 28.25 ms 对 29.21 ms）。beam 宽度 128 时，最低延迟的后端随加速器与 batch 大小变化。L20 上部分曲线在最后一个配置前就断了，因为那些运行超出了设备内存；8,192 输入 token、batch 8 时，vLLM-GR 的 beam 宽度扫描跑到了 1,024。</p>
+<h2>路线图</h2>
+<ul>
+<li>更广的模型支持：候选打分扩展到 HSTU、MTGR 与 RankMixer，给 OneTrans 加原生服务，探索总参数量更大的推荐模型（包括 MoE 模型）的服务优化。</li>
+<li>更灵活的 beam 搜索：价值感知的候选选择，给语义 ID 加更多输出头，更深的 SID 层级，可变长度生成（个别 beam 到 EOS 就停，释放槽位与 KV，接纳新请求）。</li>
+<li>在线组 batch 与调度：在线调度器决定什么时候组 batch、放哪些排队请求进组，让历史长度不同的请求一起跑，过载下保持队列有界；形状相近的 batch 分组，复用同一张捕获的计算图做重放，减少 padding。</li>
+<li>长历史与 KV 复用：优化 10,000 token 以上历史的 prefill，探索带线性或稀疏注意力的 beam 搜索；跨请求复用未变前缀的 KV 块。</li>
+<li>分布式推理与 KV 缓存：分布式 KV 缓存，让服务实例复用同一节点或另一节点上另一台设备的 KV 块。</li>
+<li>与上游 vLLM 更紧密集成：基于 vLLM 的引擎与平台接口，定期更新到更新的稳定版 vLLM。</li>
+</ul>
+<h2>值得注意的点</h2>
+<ul>
+<li>版本：vLLM-GR 0.30.0 基于 vLLM 0.30.0，支持 NVIDIA GPU 与昇腾 NPU。</li>
+<li>基准口径不统一：各加速器图的计时定义、样本数、后端设置不同（L20 每配置 100 到 1,000 个计时 batch；昇腾上 vLLM-GR 与 xLLM 用目录约束表，SGLang 的约束设置没有记录在摘要里；RTX PRO 6000 之外的预热次数没有给出；确切后端版本没有给出），跨卡横向比较时以总览图为准，细节以各硬件小节为准。</li>
+<li>与 11 月 19 日的 SGLang Megakernel、11 月 24 日的 Miles 真 On-Policy 是同一条推理优化主线：把关键路径上的工作移出串行段、让一次 launch 或一次会话做更多事。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
