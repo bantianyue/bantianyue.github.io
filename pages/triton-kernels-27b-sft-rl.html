@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>教27B模型写Triton核:SFT加GPU Gym强化学习 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>教27B模型写Triton核:SFT加GPU Gym强化学习</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://www.g-ftech.com/blog/triton-kernels-27b-sft-rl-gpu-gym-kernelbench">https://www.g-ftech.com/blog/triton-kernels-27b-sft-rl-gpu-gym-kernelbench</a></div>
+<h1>教 27B 模型写 Triton 核：SFT 加 GPU Gym 强化学习</h1>
+<p>原文：<a href="https://www.g-ftech.com/blog/triton-kernels-27b-sft-rl-gpu-gym-kernelbench">GPU Kernels, Part 2: Teaching a 27B Model to Write Triton Kernels with SFT and a GPU Gym</a>（g-factor，2026-11-03）</p>
+<h2>为什么值得读</h2>
+<p>这是一篇把"教模型写 GPU 核"从头做到尾的工程复盘：SFT 数据集里的 2,034 个核在 H100 上逐个重验，GRPO 式强化学习在 GPU gym 里练，每个答案都编译、校验、计时。最有价值的部分不是成绩，而是 7 版 gym 各坏一次的故障复盘，以及一个反直觉的结论——gym 奖励纯 Triton，考试奖励混合解，Level 2 的正确率因此一动不动。</p>
+<h2>核心结论</h2>
+<ul>
+<li>两阶段训练把 Qwen3.8-27B 的 KernelBench 1–2 级正确率从 21.5% 推到 29.5%，正确且快过 eager PyTorch 的核从 7.0% 涨到 9.5%。Level 1 正确 31→47 道，快核 8→15 道。</li>
+<li>开中等思考再打一次分：正确率 29.5%→41.0%，Level 2 几乎翻倍（12→23 道）；但快过 eager 的核只从 19 个涨到 22 个。推理买正确率，不买速度。</li>
+<li>前沿模型在同一套题上领先 20 倍（Level 2 的 fast₁ 81 对 4），几乎全靠混合 cuDNN + Triton 解。</li>
+</ul>
+<h2>两阶段训练</h2>
+<p>基座 Qwen3.8-27B 开箱即懂基本的 Triton 语法，大约五分之四的答案能无语法错误地编译执行。缺的是数值精度与打败 PyTorch 需要的架构直觉。</p>
+<p><strong>第一阶段 SFT</strong>：2,034 个已验证问答对，全部在 H100 上按生产规模重验。来源是 siro1 收集的 Kimi K2 解 KernelBook 模块（每模块最多两个解），张量放大到约 100 万元素，token 集 Jaccard 相似度超 0.6 的问题一律清除，静态 AST 检查剔掉 forward() 里回落到 PyTorch 算子的解，再加 682 个早期 gym 探索跑出的成功解。其中 1,624 个在目标规模上跑赢 torch.compile。rank-8 LoRA adapter 训 2 个 epoch（3,674 步，学习率 2e-4），单张 H100 上大约 5 小时。</p>
+<p><strong>第二阶段 RL</strong>：gym 采用 OpenEnv 式架构，每集一个 worker 提供参考 PyTorch 模块，模型起草实现，隔离的 GPU 子进程在 H100 上做基准。GRPO 式每任务 8 个答案一组，CISPO 损失，REPO-R 熵控制，KL β=0.08，学习率 1e-5，300 步约 28 小时。</p>
+<h2>GPU gym：五道门与奖励</h2>
+<p>每份答案过五道验证门：静态策略沙箱（白名单 import）、编译与启动验证（经 CUDA 事件确认 Triton 核真的启动）、算力隔离（forward() 期间禁用 PyTorch 原生算力，混合任务只允许一次 cuBLAS/cuDNN 调用）、五个隐藏测试用例（标称、3 倍、0.01 倍、符号取反、绝对值，FP32 容差 1e-4）、低方差计时（方差低于 10% 才采纳）。</p>
+<p>奖励函数平衡正确性与性能：1–3 号门是硬要求，失败直接归零；c 是通过的隐藏测试用例占比，v 是实测加速比，ρ 检查计时稳定性，e 惩罚工具折腾。速度奖励严格设门，五个隐藏用例全部干净通过且计时稳定才有速度分。速度占比按对数从 0.75 倍涨到 4 倍。</p>
+<p>两种作答方式：单轮模式占 25%（照 KernelBench prompt 一次性作答），多轮修复模式占 75%（可调 submit_kernel、inspect_evaluation，最多迭代 4 次）。最终跑里模型解出 63.8% 的修复集，单轮 50.5%。</p>
+<h2>7 版 gym，每版各坏一次</h2>
+<table>
+<thead>
+<tr>
+<th>版本</th>
+<th>故障</th>
+<th>修复</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>v3</td>
+<td>复制参考辅助函数的答案被当不安全代码驳回</td>
+<td>复制的辅助函数干净剥离，不再惩罚</td>
+</tr>
+<tr>
+<td>v4</td>
+<td>宽松 FP32 容差放过 KernelBench 后来驳回的核</td>
+<td>输出必须在 1e-4 容差内匹配参考张量</td>
+</tr>
+<tr>
+<td>v5</td>
+<td>难算子族上一组 8 个样本经常全得零分，梯度为零</td>
+<td>1e-2 宽松带内匹配给部分进度分</td>
+</tr>
+<tr>
+<td>v6</td>
+<td>速度奖励在 2 倍处截断饱和；小张量上编译开销让任何核都显得快 6–9 倍</td>
+<td>张量放大到 1–3,200 万元素，改 0.75–4 倍对数速度奖励</td>
+</tr>
+<tr>
+<td>v7</td>
+<td>没有任何验证确认 Triton 核真的在 GPU 上跑了</td>
+<td>引入原生执行门，经 CUDA 事件确认核启动</td>
+</tr>
+<tr>
+<td>v8</td>
+<td>gym 与 KernelBench 脱节；一个 PyTorch 内部 import 能绕过算力守卫；种子 bug 只抽了 966 行里的 69 行</td>
+<td>新增 14 个算子族、单轮模式、严格 import 白名单、修复行哈希</td>
+</tr>
+<tr>
+<td>v9</td>
+<td>复杂算子族解出率仍接近零</td>
+<td>引入分阶段课程练习（脚手架与尾声任务）</td>
+</tr>
+</tbody>
+</table>
+<p>两个故障最能说明奖励 bug 有多微妙。指标饱和（v5）：每个通过的核都拿满分 1.0，梯度对进一步优化零压力。沙箱绕过（v8）：模型还没发现漏洞，但留一个可利用的洞就是定时炸弹。</p>
+<p>分阶段练习解决了冷启动：之前零有效样本的算子族开始提供稳定的梯度反馈。</p>
+<h2>gym 与 KernelBench 的三处错位</h2>
+<p>多数基准收益来得早：SFT 期间与 RL 前 100 步。之后 KernelBench 进入平台期，gym 指标却继续爬。v9 四个季度 gym 解出率 73.4%→59.0%→54.9%→61.7%，KernelBench fast₁ 却是 9.5%、9.5%、8.5%、8.0%。</p>
+<ol>
+<li><strong>速度目标不一样</strong>：gym 拿 torch.compile 当速度基线，KernelBench 拿 eager PyTorch。在 gym 的大 FP32 张量尺寸下，编译后的 PyTorch 反而常常更慢。86.8% 的正确训练核打败 torch.compile，只有 61.4% 打败 eager PyTorch；26.2% 通过的核拿了正速度奖励，实际却比 eager 慢。编译后运行时的中位数比 eager 慢 2.1 倍。</li>
+<li><strong>Level 2 的策略不一样</strong>：Level 2 是 63 个卷积与 36 个 GEMM 任务，各配一段逐元素尾巴。胜出的打法是混合实现：核心 GEMM 或卷积留在 cuBLAS/cuDNN，只给融合激活尾巴写 Triton 核。基座 Qwen 自然采用这个策略（55% 的时间），早期一个检查点产出 11 个快速混合解。但 SFT 筛选滤掉了混合代码，gym 封了 PyTorch 算力，SFT 后的模型只在 8% 的时间提交混合解。对比之下，Claude Opus 与 GPT-6 在 61% 到 93% 的 Level 2 答案里采用混合解。</li>
+<li><strong>练习不是考试</strong>：分阶段课程的收益集中在有辅助的变体上；面对无辅助的完整 Level 2 模块，模型难以合成完整的端到端核。</li>
+</ol>
+<h2>前沿模型对比</h2>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>正确</th>
+<th>快过 eager（fast₁）</th>
+<th>快 2 倍以上</th>
+<th>平均答案 token</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Qwen3.8-27B 基座</td>
+<td>21.5%</td>
+<td>7.0%</td>
+<td>3.5%</td>
+<td>未记录</td>
+</tr>
+<tr>
+<td>Qwen3.8-27B SFT + RL</td>
+<td>29.5%</td>
+<td>9.5%</td>
+<td>5.0%</td>
+<td>1,109</td>
+</tr>
+<tr>
+<td>Qwen3.8-27B SFT + RL，开思考（中等）</td>
+<td>41.0%</td>
+<td>11.0%</td>
+<td>6.0%</td>
+<td>5,049</td>
+</tr>
+<tr>
+<td>Fable 5.1</td>
+<td>70.0%</td>
+<td>46.5%</td>
+<td>17.5%</td>
+<td>2,906</td>
+</tr>
+<tr>
+<td>Opus 5.5</td>
+<td>68.5%</td>
+<td>51.5%</td>
+<td>22.5%</td>
+<td>2,535</td>
+</tr>
+<tr>
+<td>GPT-6 Astra</td>
+<td>84.0%</td>
+<td>66.5%</td>
+<td>19.5%</td>
+<td>1,871</td>
+</tr>
+<tr>
+<td>GPT-6.1 Sol</td>
+<td>85.0%</td>
+<td>66.5%</td>
+<td>20.0%</td>
+<td>1,747</td>
+</tr>
+</tbody>
+</table>
+<p>Level 1 上调优后的 27B 离前沿不远（未标速度的 fast₁ 47 对 15，约 3 倍）；Level 2 上前沿领先 20 倍（81 对 4）。商用模型有 6 到 8 个报告加速超 10 倍的解，滤掉不可信标记后 fast₁ 掉 3 到 4 个百分点。</p>
+<p>开思考后，与前沿在正确率上的差距从 39–56 个百分点收窄到 28–44 个百分点；速度上的差距留在原地。200 个答案里 56 个（其中 39 个在 Level 2）没等推理收尾就耗尽 token，按失败计。</p>
+<h2>实测数字</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>基座</th>
+<th>SFT 后</th>
+<th>SFT + RL 后</th>
+<th>开思考（中等）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>编译并运行的答案</td>
+<td>79.5%</td>
+<td>86.5%</td>
+<td>88.5%</td>
+<td>70.5%</td>
+</tr>
+<tr>
+<td>正确（fast₀）</td>
+<td>21.5%</td>
+<td>26.0%</td>
+<td>29.5%</td>
+<td>41.0%</td>
+</tr>
+<tr>
+<td>正确且快过 eager（fast₁）</td>
+<td>7.0%</td>
+<td>8.0%</td>
+<td>9.5%</td>
+<td>11.0%</td>
+</tr>
+<tr>
+<td>正确且快过 torch.compile</td>
+<td>12.5%</td>
+<td>15.0%</td>
+<td>16.0%</td>
+<td>18.0%</td>
+</tr>
+<tr>
+<td>Level 1 正确</td>
+<td>31.0%</td>
+<td>43.0%</td>
+<td>47.0%</td>
+<td>59.0%</td>
+</tr>
+<tr>
+<td>Level 2 正确</td>
+<td>12.0%</td>
+<td>9.0%</td>
+<td>12.0%</td>
+<td>23.0%</td>
+</tr>
+</tbody>
+</table>
+<p>自助法确认 step 100 的正确率提升有统计意义：+3.5 个百分点，95% 区间 [+1.0; +6.5]。step 100 之后性能进入平台期；step 100 是在看到后续检查点之后选出的，数字反映 best-of-run 选择。</p>
+<h2>值得注意的点</h2>
+<ul>
+<li>SFT 数据集的去污染与纯 Triton 强制执行本意是质量门，却在 Level 2 上反噬：滤掉的混合解恰恰是胜出的策略。数据筛选的副作用要到基准上才看得见。</li>
+<li>奖励函数的基线选错比奖励形状更致命：对着 torch.compile 计时，等于教模型跨一道比真正考试更矮的栏。</li>
+<li>思考预算卡脖子：开思考后超过四分之一的答案撞上 8,192 token 预算。下一步要么用更大的预算评测，要么开着推理训 adapter。</li>
+<li>局限：单一训练种子与贪心采样；step 100 是 best-of-run 选择；前沿模型经厂商 CLI 单轮作答，条件不对称；全部评测在 FP32、KernelBench 1–2 级、H100 SXM 上进行。</li>
+<li>权重与数据集已开源：LoRA adapter 与已验证 SFT 数据集在 Hugging Face（g-factor-technologies）。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
