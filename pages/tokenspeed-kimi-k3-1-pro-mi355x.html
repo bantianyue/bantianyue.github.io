@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TokenSpeed×Kimi K3.1 Pro：8 卡 MI355X 单用户 302 tokens/s，AgentX 前沿刷新 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>TokenSpeed×Kimi K3.1 Pro：8 卡 MI355X 单用户 302 tokens/s，AgentX 前沿刷新</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://lightseek.org/blog/tokenspeed-kimi-k3-1-pro-mi355x.html">https://lightseek.org/blog/tokenspeed-kimi-k3-1-pro-mi355x.html</a></div>
+<h1>TokenSpeed×Kimi K3.1 Pro：8 卡 MI355X 单用户 302 tokens/s，AgentX 前沿刷新</h1>
+<ul>
+<li>原文：https://lightseek.org/blog/tokenspeed-kimi-k3-1-pro-mi355x.html</li>
+<li>收藏：2026-11-25</li>
+<li>主题：并行策略（推理）</li>
+<li>一句话要点：TokenSpeed 把 Kimi K3.1 Pro 在 8 卡 MI355X 上的 AgentX 服务做成一个协同设计的系统：KVP8/DCP8 分历史、MXFP4 索引键、DSpark 专项、Gluon 单核一层一次 launch，并发 1 单用户 302 tokens/s、并发 48 每 GPU 22,011 tokens/s。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这篇的价值不在某一个数字，而在它把"Agent 推理"当成一个服务系统问题完整拆开：模型是 93 层混合架构（69 层 KDA + 24 层门控 MLA，896 个路由专家），负载是 AgentX（长对话反复访问几十万 token 的历史、请求长度高度偏斜、prompt 分块打断解码、推测解码变成验证窗口）。作者没有只调一个 kernel，而是沿着历史分片、索引器成本、prefill 与 decode 的相互打断、草稿模型专项、单核融合、批量融合六条线各给一个可复现的配方，并且把七个并发点的完整服务设置（表 1）与混合精度策略（表 2）全部公开。读完能直接照着搭一个"延迟优先到吞吐优先"的服务包络，而不是只记住一个峰值数字。</p>
+<h2>核心结论</h2>
+<ul>
+<li>在完整的 InferenceX AgentX 负载上，8 卡 MI355X：并发 1 每用户 302 个输出 token/s、每 GPU 2,441 个总 token/s；并发 4 是 225 与 3,751；并发 8 是 150 与 6,222；并发 16 是 112 与 10,757；并发 48 是 43 与 22,011。并发 48 的交互性比该并发下最好的同行推理引擎高 21%。</li>
+<li>前沿是吞吐与交互的权衡曲线，不是每个孤立标量都最大。每个点是一次 3,600 秒的 AgentX 运行；吞吐是每 GPU 每秒输入与输出 token 之和；交互性是 P90 每输出 token 时间的倒数，不含首 token 时间与排队时间。</li>
+<li>Kimi K3.1 Pro 的 93 层混合架构：69 层 KDA（固定大小循环状态），24 层门控 MLA（Lightning Indexer 扫描历史、选最相关的 2,048 个位置、做稀疏 MLA），896 个路由专家与注意力残差带来 launch、内存与集合通信开销。</li>
+<li>KVP8 把每个请求的 latent 行与索引键分片到 8 个 rank；DCP8 每 rank 给本地索引键打分、交换候选记录、在 KV 所在处做注意力、log-sum-exp 合并部分输出。C1/C4 保持 KVP1、禁用 host KV 层；C8–C48 用 KVP8/DCP8、每 GPU 固定 128GB host L2 缓存。C48 时分布式路径吞吐是 KVP1/DCP1 的 7.9 倍。</li>
+<li>索引键存为 68 字节 MXFP4 行（原 132 字节缩放 FP8 行），索引 query 同编解码，索引器权重保持 BF16。top-k 按每行实际候选跨度规划：192K 上下文 KVP8 解码层 24K 候选时，40 行 MI355X top-k 调用从 27.7 微秒降到 19.1 微秒；并发 1、384K 上下文解码步从 18.94 毫秒降到 18.29 毫秒。</li>
+<li>prefill 图捕获 KVP8 prefill 的稳定部分，可变的历史收集与注意力留在 eager 断点；混合批次让 KVP 扩展行与 DCP 解码行共享一次前向。8K token prompt 分块与 16 个解码并行时，处理时间从 507 毫秒降到 364 毫秒。</li>
+<li>调度用两档间距：--prefill-decode-interval N（每 prompt 分块后通常调度 N 轮解码，prompt 过期可暂停）；--prefill-decode-min-interval M（prompt 分块之间至少 M 轮解码，即使 prompt 已过期，永不暂停）。M 越高，流式响应的长间隔越短，首 token 等待越长、prefill 吞吐越低。</li>
+<li>DSpark 草稿是 5 层 GQA、2,048 token 滑动窗口；每轮贪心提议把约十几次 kernel launch 与两次跨 GPU 交换折成一个本地 kernel 与一次点对点归约（分数与 token ID 打包进一个 64 位值）。C1–C8 每步 7 个草稿 token，C16–C48 缩到 5 个。golden 接受长度：1–7 个草稿 token 对应 1.86、2.56、3.08、3.46、3.81、4.00、4.16。</li>
+<li>常驻 gfx950 Gluon 单核（MoE 层尾部）把注意力之后的工作合成每个 rank 一次 launch：输出投影 + all-reduce、MLP 侧 AttnRes 混合与 RMSNorm、top-16 路由、路由 MXFP4 与共享专家、latent 上投影、层输出。200K 上下文 A/B 对比：中位验证步间隔从 15.24 毫秒降到 14.40 毫秒（-5.5%）；并发 1 时每输出 token 时间从 3.67 毫秒降到 3.47 毫秒，每 GPU 输出吞吐升 2.4%，首 token 时间降 5.0%，端到端延迟降 4.2%。N16 专家布局每 GPU 小约 19GB，内存还给 KV 缓存。</li>
+<li>批量路径两类融合：结尾融合与形状专项 MoE（C4–C48 吞吐 +1.0–2.6%、交互性 +2.1–6.3%）；生产者-消费者与计算-集合融合（C4 吞吐 +2.3%、交互性 +9.2%；C8 吞吐 +2.0%、交互性 +1.5%）。</li>
+<li>质量证据：GSM8K 严格精确匹配 98.10%（标准误差 0.38 个百分点，样本数 1,319）；DSpark 真实接受长度 C48 时 3.76（golden 3.81，5 个草稿）；8 台 MI355X worker 全部完成。混合精度：KV 用 FP8、索引键与索引 query 用 MXFP4、索引器权重 BF16、KDA 循环状态 FP32、模型线性层 BF16、TP all-reduce BF16、路由 MoE 用 A8W4、常驻层尾部用 A4W4。</li>
+</ul>
+<h2>逐节要点</h2>
+<ul>
+<li>结果：AgentX 新前沿：Agent 推理不是一个吞吐数字；InferenceX 用每美元总 token 数对 P90 交互性作图，P90 交互性是第 90 百分位每输出 token 时间的倒数；TCO 模型假设每 MI355X 每小时 1.50 美元、每 B200 1.73 美元、每 GB200 1.86 美元、每 B300 2.26 美元、每 GB300 2.31 美元。</li>
+<li>亮点：五条要点（新纪录、低并发高交互、高吞吐兼高交互、优化覆盖全栈、单请求解码每层大多一次 launch）+ C1–C48 的完整数字 + 测量方法（3,600 秒、单节点 8 卡、合成 golden 接受率）。</li>
+<li>为什么 Kimi K3.1 Pro 考验服务栈：93 层混合架构的组成；AgentX 放大开销的四种方式（长历史、长度偏斜、prompt 分块打断解码、推测解码变验证窗口）。</li>
+<li>把历史分到多个 GPU 上：张量并行复制 MLA 历史、不增单请求缓存容量；KVP8/DCP8 的分工；Iris 经 GPU 可见对等内存搬运小记录；KVP 的开销与启用条件；C8 中性、C16 起双升、C48 达 7.9 倍。</li>
+<li>让稀疏索引器比它替代的历史更便宜：68 字节 MXFP4 行；top-k 按实际候选跨度规划；批次分块大小统一、每请求分块数不同。</li>
+<li>别让 prompt 工作打断解码：prefill 图 + eager 断点；混合批次；N 与 M 两档间距的语义与权衡；最终配方按并发调。</li>
+<li>为目标模型专项优化 DSpark：5 层 GQA 草稿的结构与缓存组；提议轮次的 launch 折叠与 64 位打包；草稿宽度按并发调；golden 接受长度曲线。</li>
+<li>每层一次 launch：Kimi K3.1 单核：注意力核心留在外面、融合从输出投影开始；256 个 workgroup 常驻、带标签字发信号、HIP IPC 对等缓冲交换部分和；两组 A/B 数字（50K -5.2%、200K -5.5%、C1 各项）。</li>
+<li>批量解码的融合与形状专项优化：常驻单核专为 C1；批量路径的两类融合与 C4/C8 的实测提升。</li>
+<li>从一个配方到一个服务包络：七个并发点的配置差异；通用服务控制 vs 基准分支；表 1 的完整设置与公共基础（TP8、EP1、FP8 KV、MXFP4 索引键、8,192 token prefill 分块、DSpark 草稿）。</li>
+<li>精度、数值与可复现性：吞吐扫描不是质量证据；表 2 的真实采样器证据与混合精度策略。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>吞吐扫描用合成 golden 接受率隔离执行速度，不是质量证据；质量证据只有 GSM8K 一项（98.10%）与 DSpark 真实接受长度（C48 时 3.76）。</li>
+<li>前沿曲线依赖 InferenceX 的 TCO 价格假设（每芯片小时价格）；换价格假设，曲线位置会变。</li>
+<li>配方与固定软件绑定（TP8、EP1、FP8 KV、MXFP4 索引键、8,192 token prefill 分块）；换硬件或换模型要重调。</li>
+<li>致谢节已按规则删除（源站 h3 致谢，无技术内容）。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>KV 并行 + 解码上下文并行的分工：KVP 切历史、DCP 在 KV 所在处算注意力、log-sum-exp 合并；只在历史长度与并发值得的地方开（C1/C4 关、C8 起开）。</li>
+<li>稀疏索引器的成本控制：索引键压成 68 字节 MXFP4 行、top-k 按每行实际候选跨度规划、批次分块大小统一但每请求分块数不同。</li>
+<li>prefill 与 decode 的两档间距控制：N 限 prompt 推迟（过期可暂停）、M 保 decode 间距（永不暂停）。</li>
+<li>推测解码的宽度按并发调：C1–C8 用 7 个草稿 token，C16–C48 缩到 5 个。</li>
+<li>单核融合的适用区间：并发 1 用常驻单核一层一次 launch；C4 起走常规批量路径做结尾融合与形状专项。</li>
+<li>服务包络的写法：七个并发点各一套设置（序列上限、草稿宽度、KVP/DCP、prefill 图、host L2、N/M、混合批次、短 prefill 优先），公开全部设置比只报峰值数字更有说服力。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
