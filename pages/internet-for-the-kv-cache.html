@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KV 缓存的互联网：存到任何地方，在任何地方用 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>KV 缓存的互联网：存到任何地方，在任何地方用</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://blog.lmcache.ai/en/2026/10/27/internet-for-the-kv-cache/">https://blog.lmcache.ai/en/2026/10/27/internet-for-the-kv-cache/</a></div>
+<h1>KV 缓存的互联网：存到任何地方，在任何地方用（4⭐，拟 No.129）</h1>
+<ul>
+<li>原文：https://blog.lmcache.ai/en/2026/10/27/internet-for-the-kv-cache/（LMCache 博客，2026-10-27）</li>
+<li>收藏：2026-11-25</li>
+<li>主题：推理可观测、KV 缓存、推理优化</li>
+<li>一句话要点：跨网传输 KV 缓存已比重新计算更快更便宜，论文提出把缓存的推理状态当作可分发的内容，在存储层级、区域与云厂商之间自由放置与移动。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是第一篇把“KV 缓存分发”从单机优化拔高到互联网基础设施层面的文章：不只谈前缀缓存命中率，而是给存与重算算了一笔跨云的经济账，再把答案落到一张全球控制面架构图上。数字很干净——传输 1GB 压缩 KV 缓存 0.8 秒、0.09 美元，重算 15 秒、0.47 美元；盈亏表 7 组配置直接展示复用间隔与云厂商选择如何翻转结论。对做推理系统与 KV 缓存的人，这是“下一步该建什么”的路线图。</p>
+<h2>核心结论</h2>
+<ul>
+<li>跨网传输 KV 缓存现在比重新计算更快更便宜：DeepSeek-V4-Pro 约 10 万 token 上下文的压缩 KV 缓存约 1GB，10 Gbps 满载链路传输约 0.8 秒、AWS 出网费约 0.09 美元；AWS 8×B200 重算约 15 秒、0.47 美元；传输快约 19 倍、便宜约 5.2 倍。</li>
+<li>压缩与算力同时改变天平两边：KV 缓存从 DeepSeek-V3.2 的 9GB 缩到 V4-Pro 的 1GB（约 9 倍），Rubin 50 PFLOPS NVFP4 推理算力相对 Blackwell Ultra 的 15 PFLOPS 提高约 3.3 倍。</li>
+<li>存与重算的决策比较 CacheCost（存储与传输可复用状态的成本）与 PrefillCost（重算成本）；盈亏点上模型侧比率（预填充计算量 / KV 缓存大小）等于基础设施侧比率（存储与传输成本相对 GPU 算力成本，含复用时机）；基础设施侧比率低于模型侧比率时存储更便宜。</li>
+<li>表 1 的 7 组配置：DeepSeek-V4-Pro 模型侧比率 11.410，V4-Flash 4.325；AWS 上 V4-Pro 复用间隔从 1 天拉到 1 个月翻转结论，到 1 个月换 Azure 配置又翻转一次；GMI 高存储配置 1 天即判定重算更便宜。</li>
+<li>高命中率仍可能掩盖昂贵的长上下文未命中：前缀缓存只捕获精确共享前缀，CacheBlend 与 Cache-Craft 复用非前缀片段可拓宽可复用上下文。</li>
+<li>拟议架构：全局 KV 缓存控制面统一做目录、查找、放置规划与预取调度；复用时限决定层级——秒级放热层、分钟级放温层、小时级放冷层；交付太慢或太贵时重算并更新放置策略。</li>
+<li>还需要造三样东西：网络感知的移动（成本与延迟可见、可预测交付）、自适应的基础设施与控制面（优雅降级与修正放置）、跨厂商与监管方和用户的协调（所有权、定价、隐私、正确性与故障责任，类似 IETF 的标准化）。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>为什么现在要重审这套基础设施：模型、KV 缓存与系统三方向改变推理经济账；传输上下文何时胜过重算（0.8 秒 / 0.09 美元 vs 15 秒 / 0.47 美元）。</li>
+<li>KV 缓存成为共享推理资源：KV 缓存是存储、通信与调度原语；存还是重算（盈亏比率与表 1 的 7 组配置）；让昂贵的未命中少发生；为下一代工作负载而建。</li>
+<li>KV 缓存的互联网：今天的云边界如何决定放置；存到任何地方，在任何地方用（全局控制面与热、温、冷分层）。</li>
+<li>还需要造什么：网络感知移动、自适应基础设施与控制面、跨厂商协调。</li>
+<li>走向何方：新协议、抽象与控制面；核心主张是把可复用推理状态放在存储、交付与重算合起来最能满足成本与延迟需求的地方。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>文中 AWS 价格来自论文分析，仅作示例，不推荐任何厂商或配置，也不描述受支持的 LMCache 部署；价格与费率会变，结论须按当前价目重算。</li>
+<li>传输数据假设 10 Gbps 链路满载利用，真实跨云链路的带宽、拥塞与丢包会打折扣；控制面的带宽估计与交付时限机制本身就是待建项。</li>
+<li>博客是论文改编的短文，盈亏模型是简化分析，未展开压缩、部分重算与混合策略的完整成本函数。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>存与重算的决策框架：模型侧比率 vs 基础设施侧比率，复用间隔是第三个自变量；做 KV 缓存分层设计时可直接套用这张盈亏表。</li>
+<li>跨云 KV 缓存放置按复用时限分层：秒级热、分钟级温、小时级冷，预取窗口由复用前的等待时间创造。</li>
+<li>未命中成本要单独算：前缀缓存命中率高不等于长上下文未命中便宜，非前缀复用（CacheBlend、Cache-Craft）是补齐项。</li>
+<li>写推理基础设施文章时可用“传输 vs 重算”做开篇算账：一个具体模型、一组具体数字，先立住经济性再谈架构。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
