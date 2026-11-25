@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Harvey 后训练配方推高美国开源模型：Muse Spark Open 法律智能体任务全过率首破 30% · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Harvey 后训练配方推高美国开源模型：Muse Spark Open 法律智能体任务全过率首破 30%</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://x.com/nikogrupen/status/2125258400866910269">https://x.com/nikogrupen/status/2125258400866910269</a></div>
+<h1>Harvey 后训练配方推高美国开源模型：Muse Spark Open 法律智能体任务全过率首破 30%（4⭐，拟 No.123）</h1>
+<ul>
+<li>原文：https://x.com/nikogrupen/status/2125258400866910269（X Article，Harvey，2026-11-24）</li>
+<li>收藏：2026-11-25</li>
+<li>主题：训练核心流程、Agent for Infra（智能体后训练）</li>
+<li>一句话要点：Harvey 把 Harvey Tenet 后训练配方扩展到 4 款美国开源权重模型，Muse Spark Open 在法律智能体基准 LAB 上全过率 30.3%，首个突破 30% 的模型，且其他能力无回归、单位 token 效率同步提升。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是第一份把“智能体后训练配方”系统性地横向迁移到多个开源模型家族的实证：同一套配方（异步 RL + 专家评分规则奖励 + rank-64 LoRA + CISPO/Dr. GRPO）在 5 款模型上全部生效，LAB 全过率从原始模型的 0–19.2% 拉到 20.0–30.3%。更关键的是它回答了两个常被追问的问题：第一，后训练会不会以牺牲通用能力为代价——没有，SWE-bench Pro 不降反升；第二，分数提升是不是靠多烧 token 换来的——不是，Muse Spark Open 以少 36% 的输出 token 拿到更高分。律师偏好锦标赛（GRM 成对比较转 Elo）还揭示了一个反直觉结论：评分规则优化能提升任务完成度，却不总能提升最终工作成果的偏好度。</p>
+<h2>核心结论</h2>
+<ul>
+<li>Muse Spark Open 后训练后 LAB 全过率 30.3%，迄今最高、首个突破 30%；训练后完成的任务比原来多 58%。</li>
+<li>Nemotron 3.5 Super VL（21.8%）、Beam 1.0（20.8%）、Inkling 2 Small（23.3%）全部超过 20%，超过此前三倍于其规模的 Kimi K3 达到的水平；对照组 GLM-5.3 为 20.0%。</li>
+<li>提升泛化到未参与训练的法律基准：Inkling 2 Small 的 LAB Contracts 任务量增至三倍以上（4.0%→13.0%）；Beam 1.0 的 Redline Bench 从 40.6% 升至 51.1%。</li>
+<li>非法律基准基本保持，SWE-bench Pro 提升（Muse 51.0%→68.6%，GLM 68.6%→84.3%），尽管训练中没有软件工程任务。</li>
+<li>律师偏好：Nemotron、Beam、GLM-5.3 的 Elo 大幅上升（GLM 1404→2294，Nemotron 878→1432，Beam 1103→1615），GRM 在 98% 的成对比较中更偏好后训练版本；Muse（1427→1377）与 Inkling（1779→1691）的 Elo 反而微降，直接胜率与 50% 无显著差异。</li>
+<li>效率：Muse Spark Open 在 LAB 每个推理设置下都超过原始模型，30.3% 对原始模型最高推理力度的 25.8%，同时每任务输出 token 减少 36%。</li>
+<li>训练：异步 RL + 专家评分规则奖励；每模型一个 rank-64 LoRA 适配器（CISPO，Dr. GRPO 优势与损失归一化）；80 步后选最优检查点（Beam 1.0 为 200 步），每 20 步评估一次，取最高保留集全过率；Baseten Loops 训练（Inkling 用 Tinker），rollout 全部走 Baseten Sandboxes；超参数在 Nemotron 3.5 Super VL 上扫参后复用于其余模型。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>后训练配方与评测范围：Harvey Tenet 背景；4 款美国开源模型 + GLM-5.3 对照；评测覆盖法律、咨询、银行、业务自动化、软件工程；三条关键发现。</li>
+<li>性能：表 1（后训练后 14 项基准分数）；分布内提升；向 LAB Contracts、APEX Agents（公司法）、Redline Bench 泛化；非法律基准无回归。</li>
+<li>律师偏好：GRM 成对锦标赛方法（双呈现顺序、身份隐去、Elo 汇总）；三款模型偏好大幅提升、两款无显著变化；分维度解释（覆盖度普升，准确性/推理分化，风格/语气下降）；评分规则优化与工作成果偏好的脱节。</li>
+<li>效率：单位 token 性能检验；Muse Spark Open 推理力度扫描（LAB 与 SWE-bench Pro），更少 token、更高分。</li>
+<li>训练：异步 RL 环境；奖励与保留集表现同步提升；环境/奖励/优化/基础设施/对照五项配置细节。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>偏好与任务完成度脱节：起点高于 10% 全过率的模型（Muse、Inkling）任务完成度提升，但 GRM 偏好没有相应提升，Elo 反而微降；评分规则奖励对改进已能干模型的写作指导有限。</li>
+<li>效率机制未完全解释：SWE-bench Pro 的提升与推理量增加同时出现，作者承认部分收益可能来自更长推理，计划显式优化推理效率。</li>
+<li>附录（训练配置细节）只在 Harvey 博客，不在 X Article 正文内；本文未收录附录。</li>
+<li>评测全部围绕法律智能体任务，配方向其他垂直领域的迁移效果未在本篇验证。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>智能体后训练配方模板：异步 RL + 专家评分规则（三项加权：通过规则占比、完整通过的法律问题组占比、全过奖励，无长度惩罚）+ rank-64 LoRA + CISPO/Dr. GRPO，可直接套用到其他需要长程任务完成度的智能体场景。</li>
+<li>评估方法：任务完成度（LAB 全过率）+ 律师偏好（GRM 成对锦标赛转 Elo）+ 效率（推理力度扫描，单位 token 性能）三维评估，避免单一分数掩盖回归或低效。</li>
+<li>超参数迁移策略：在一款模型上扫参，复用到其他模型，降低多模型后训练的调参成本。</li>
+<li>检查点选择：每 20 步评估、取最高保留集全过率，而非固定步数。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
