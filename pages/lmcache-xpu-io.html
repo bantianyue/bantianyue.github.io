@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LMCache × Phoenix：让 SSD 直写 GPU 显存，首 token 延迟降 5.6 倍 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>LMCache × Phoenix：让 SSD 直写 GPU 显存，首 token 延迟降 5.6 倍</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://blog.lmcache.ai/en/2026/11/09/lmcache-xpu-io-lmcache-meets-gpu-direct-storage/">https://blog.lmcache.ai/en/2026/11/09/lmcache-xpu-io-lmcache-meets-gpu-direct-storage/</a></div>
+<h1>LMCache × Phoenix：让 SSD 直写 GPU 显存，首 token 延迟降 5.6 倍（4⭐，拟 No.127）</h1>
+<ul>
+<li>原文：https://blog.lmcache.ai/en/2026/11/09/lmcache-xpu-io-lmcache-meets-gpu-direct-storage/</li>
+<li>收藏：2026-11-25</li>
+<li>主题：推理优化、KV 缓存、并行策略（推理）</li>
+<li>一句话要点：Phoenix 是开源全栈 GPU 直通存储 I/O 层，让 NVMe 硬盘 DMA 直写 GPU 显存，绕开主机内存与 CPU；作为 LMCache 的直通存储后端，生产 trace 回放下平均首 token 延迟比纯 DRAM 缓存低 5.6 倍，5 秒延迟目标内并发容量是 DRAM+SSD 分层的 2.9 倍。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>智能体推理把上下文推到百万 token 量级，单会话 KV 缓存可达数十 GB，HBM 与 DRAM 既贵又装不下，SSD 是唯一经济选择；但 SSD 离 GPU 最远，取回 KV 的每一毫秒都是 GPU 空转。这篇把“直通存储”从口号落到可复现的工程：先用实测数字讲清今天的路径有多亏（硬盘能跑 25 GB/s，端到端加载只有 10.2 GB/s；平均 TTFT 1,101 ms 里 GPU 有 71.6% 的时间在等数据），再把 Phoenix 的三层结构（适配层、I/O 层、内核层）与接入 LMCache 的方式（开放 GDS L1 框架、流有序 I/O、冻结 ABI 的 libphxfile）逐层拆开，最后用 11,596 个请求的生产 trace 回放给出端到端对比。结论可直接指导选型：SSD 做 L1 意味着同样的钱买更多容量，同样的硬件与延迟预算服务更多并发请求。</p>
+<h2>核心结论</h2>
+<ul>
+<li>问题：智能体长循环里推理与工具调用交替，SWE-bench Pro 真实 Codex trace 到第 30 轮上下文约 8 万 token，极端超 18 万 token；输入输出 token 比约 131:1，缓存命中率 94.2%；轮次中位间隔只有几秒，是把数十 GB KV 搬回 GPU 的全部预算。</li>
+<li>今天的路径：LMCache 的 fs_native L2 把 SSD 当 DRAM 之后的一层，恢复一块 KV 要走两跳（硬盘→主机内存→GPU），数据两次跨 PCIe，CPU 全程参与；四块 PCIe 4.0 NVMe 组 RAID 0，硬盘 25 GB/s，端到端加载仅 10.2 GB/s（约 40%）；平均 TTFT 1,101 ms，SSD 到 GPU 占约 600 ms，prefill 仅 313 ms。</li>
+<li>Phoenix：开源 GPU 直通存储层（SC'25 首发），硬盘 DMA 直写 GPU 显存，一跳到位；坐标准 I/O 栈之上，不依赖 cuFile 闭源库，不要求卸载文件系统或独占设备，经 io_uring 跑满 NVMe；已在 NVIDIA 与 MetaX 验证，AMD 支持 2026 年 9 月加入。</li>
+<li>接入 LMCache：开放 GDS L1 框架（NVMe slab 文件作 L1，替代 CPU 固定 DRAM 与 Device-DAX），分 DMA 驱动层（进程范围 GDSContext + staging 缓冲区 + D2D 拷贝内核）与后端抽象层（统一 GDS 后端接口，不绑定具体实现）；流有序 I/O 用 LaunchHostFunc 把 DMA 包进主机回调排进调用方流，顺序保证与内核相同；libphxfile（冻结 ABI）实现后端接口。</li>
+<li>Phoenix 后端内部：五层栈，Phoenix 占中间三层（适配层 libphoenix、内核模块 phoenixfs、Linux I/O 栈），只有两层含厂商代码；ZONE_DEVICE（Linux 4.3）为 GPU 显存建 struct page 表项，GPU 指针成为合法地址，pread/pwrite、io_uring、线程池原样工作；批量 io_uring 接口一次提交 N 个请求，四块 PCIe 4.0 NVMe 队列深度 512 下读 24 GB/s、写 15 GB/s；注册内存可同时作 GPUDirect RDMA 内存区；BAR 窗口全量/ staging（256 MB）两种映射模式。</li>
+<li>实测（8×H20、96 GB HBM、4 盘 RAID 0、TP=8、256K 上下文，11,596 请求生产 trace，约 3.5 TB KV）：最高并发下 Phoenix 平均 TTFT 比纯 DRAM 低 5.6 倍、比 DRAM+SSD 低 2.2 倍；5 秒 TTFT 目标下并发容量 37 路，对 DRAM+SSD 的 13 路与纯 DRAM 的 7 路（2.9× 与 5.3×）。</li>
+<li>落地：裸金属 root 安装内核模块，三步跑通（装 Phoenix、装 libphxfile 适配器、lmcache server --gds-l1-backend phx --gds-l1-path）；支持 Linux 5.0 及以上（Linux 6.1 测试过）。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>总览：Phoenix 是什么，核心数字（5.6 倍、2.9 倍）与 xPU-IO 背景。</li>
+<li>一、KV 缓存的难题：容量与速度（Codex trace、131:1、94.2% 命中率、容量与速度两项要求）。</li>
+<li>二、今天的路径：KV 绕道主机内存（两跳、中转缓冲代码、25 vs 10.2 GB/s、TTFT 分解图）。</li>
+<li>三、Phoenix：去掉中转缓冲的直通存储（SC'25、与 NVIDIA GDS 对比、枢纽图）。</li>
+<li>3.1 把 Phoenix 接入 LMCache（GDS L1 开放框架、GDSContext、流有序 I/O 三条保证、libphxfile）。</li>
+<li>3.2 Phoenix 后端内部（五层栈图；适配层、I/O 层、内核层、兼容性四小节）。</li>
+<li>3.3 Phoenix 一览（特性对照表：全栈开源、厂商中立、文件系统、内核 I/O 栈、与已部署共存）。</li>
+<li>四、实测结果（实验设置、三配置曲线、5.6 倍/2.2 倍、37/13/7 并发容量、加载与计算重叠）。</li>
+<li>五、在 Phoenix 后端上运行 LMCache（安装三步命令、--gds-l1-path 与冻结 ABI、Linux 版本要求）。</li>
+<li>六、结语（SSD 做 L1：更多容量、更多并发、同样的钱与硬件）。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>实测是单节点 8×H20 + 4 盘 RAID 0 的特定配置，2.9×/5.3× 的容量倍数随硬件与 trace 变化，不能直接外推到其它规模。</li>
+<li>图 5 的曲线在标注点之间是示意连线（图注写明“markers = stated · lines illustrative between stated points”），非逐点实测。</li>
+<li>libaio 支持在文中称“即将到来，也可能已在测试中”，状态未定；FUSE 今天仍是例外，不支持。</li>
+<li>文中“AMD 支持 2026 年 9 月加入”与 Instinct MI308X 测试有关，MI308X 并非 AMD 主流推理型号，覆盖面需核实。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>判断 KV 缓存分层是否合理：看最大的一层离 GPU 是否最远——SSD 做 L1 时必须配直通存储，否则 94% 命中率也换不来低 TTFT。</li>
+<li>把 GPU 显存变成内核 I/O 合法地址的通用做法：ZONE_DEVICE 建 struct page 表项 + 标准文件系统/块层 + io_uring 批量提交，不必为每种加速器重写 I/O 路径。</li>
+<li>流有序 I/O 的接法：LaunchHostFunc 把主机发起的 DMA 包进回调排进调用方流，DMA 与内核共享顺序保证，无需额外同步。</li>
+<li>厂商中立的扩展方式：厂商相关代码只留在内核模块与用户态库两层，新增加速器各加一个实现文件，核心与适配器不动。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
