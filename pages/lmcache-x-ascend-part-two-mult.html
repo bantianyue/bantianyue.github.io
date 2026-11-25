@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LMCache 多进程模式登上昇腾 NPU：独立缓存进程、双传输路径原生支持 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>LMCache 多进程模式登上昇腾 NPU：独立缓存进程、双传输路径原生支持</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://blog.lmcache.ai/en/2026/11/16/lmcache-x-ascend-part-two-multiprocess-mode-on-ascend-npus/">https://blog.lmcache.ai/en/2026/11/16/lmcache-x-ascend-part-two-multiprocess-mode-on-ascend-npus/</a></div>
+<h1>LMCache 多进程模式登上昇腾 NPU：独立缓存进程、双传输路径原生支持（4⭐，拟 No.126）</h1>
+<ul>
+<li>原文：https://blog.lmcache.ai/en/2026/11/16/lmcache-x-ascend-part-two-multiprocess-mode-on-ascend-npus/（LMCache Blog，2026-11-16）</li>
+<li>收藏：2026-11-25</li>
+<li>主题：推理可观测、KV 缓存、并行策略（推理）</li>
+<li>一句话要点：LMCache 多进程模式登上昇腾 NPU，KV 缓存独立成服务进程，lmcache_driven 与 engine_driven 两条传输路径均在昇腾原生内核栈上跑通。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是 LMCache × Ascend 系列第二篇，讲的是 KV 缓存跨进程共享在国产加速器上的落地细节：缓存进程独立带来的三点收益、两条传输路径在“谁做拷贝”上的分工、以及平台层上游化与硬件内核留插件的分工模式。对在 Atlas 800I 上跑 vLLM 推理服务的人来说，这篇直接给出了可照抄的三步部署与验证矩阵；对做推理 infra 的人来说，Ascend 成为 CUDA/HIP 生态之外首个跑通双路径的加速器，是国产推理栈成熟度的一个标志。</p>
+<h2>核心结论</h2>
+<ul>
+<li>多进程模式把 KV 缓存所有权从引擎进程移交给独立的 lmcache 服务进程：缓存比引擎活得久（工作进程重启、重调度或崩溃不丢暖缓存）、多台 vLLM 实例共享一台缓存服务（一个引擎预填的前缀对所有引擎都是缓存命中）、引擎循环更轻（存储、取回、分块、逐出移入服务进程，查找与存储尽可能异步，GIL 竞争、CPU 开销与 I/O 开销不占调度与解码路径）。</li>
+<li>控制面是默认走 ZMQ 的轻量 RPC 链路；数据面两条路径昇腾上都可用。lmcache_driven 是 NPU 默认路径：工作进程把 NPU 显存导出为 IPC 句柄，torch.npu 实现与 CUDA 相同的跨进程事件 ABI，服务进程用原生多层块传输内核汇聚与散射；支持 DeepSeek-V4 打包的四平面（latent、rope、DSA indexer、scale）混合精度 MLA/DSA 格式，无需主机侧重打包或格式降级。engine_driven：服务进程从双方共同映射的命名 /dev/shm 池分发数据块，一次存储即一次拷贝直达共享 L1，适配 Qwen3 类单格式 GQA/MHA 模型。</li>
+<li>Ascend 是 CUDA/HIP 生态之外首个在独立开发的内核栈上跑通双多进程传输路径的加速器，全部 Ascend C 内核均已在 LMCache-Ascend 开源。</li>
+<li>实现分工是平台层上游化、内核留在插件：NPU 设备后端（设备 IPC 封装、跨进程事件、设备操作、多平面 KV 格式处理、传输模式自动协商）已合并进 LMCache 开发分支；LMCache-Ascend 只提供 Ascend C 内核（面向普通 K/V 与打包多平面布局的多层块传输）。用户无需跟踪分支、无需等下游移植。</li>
+<li>三步部署（vLLM-Ascend 容器内）：安装 LMCache 与 LMCache-Ascend（先核对 third_party/hcomm 子模块与容器 CANN 版本是否匹配）→ 启动缓存服务（lmcache server --chunk-size 128 --l1-size-gb 50 --eviction-policy LRU，等 localhost:5555 就绪）→ vLLM 接 LMCacheMPConnector 启动（Qwen3-32B 示例：TP8、端口 8900，--no-enable-prefix-caching 让测试命中归因于 LMCache）。验证信号：每工作进程出现 Creating transfer context (device_type=npu, mode=lmcache_driven)，同一长提示发两遍，服务日志先 Stored ... tokens 后 Retrieved ... tokens，vLLM 的 External prefix cache hit rate 从零爬升。</li>
+<li>DeepSeek-V4 用 4096 token 数据块运行，连接器会在会话开始前把服务进程数据块大小协商上调到模型要求的对齐值。</li>
+<li>验证矩阵：硬件 Atlas 800I A2/A3（Ascend 910B/910C，已支持），Atlas 300I Duo 不支持，Atlas 800I A5 计划支持；软件栈 vLLM ≥ v0.23.0、vLLM-Ascend ≥ v0.23.0、CANN ≥ 8.5、Ascend Driver ≥ 25.5、PyTorch ≥ 2.8 与 torch_npu；已验证模型 Qwen 系列（Qwen3-32B，TP8，双模式）、DeepSeek-V4（V4-Flash，TP8/EP，lmcache_driven）、GLM-5.3 及其他主流模型；Qwen3.5/3.6/3.8 混合 Mamba 走 lmcache_driven（配 --mamba-cache-mode align 与 --separate-object-groups）。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>多进程模式登上昇腾：2025 年 11 月首次宣布 LMCache 跑在昇腾 NPU 上时缓存住在引擎进程内；如今多进程模式已支持，缓存归属独立服务进程，昇腾默认 lmcache_driven。</li>
+<li>为什么要把缓存进程独立出来：缓存比引擎活得久、一个缓存多台引擎、引擎循环更轻；加速器侧的关键是 KV 张量如何跨过进程边界。</li>
+<li>双传输路径，均原生实现：控制面 ZMQ RPC；lmcache_driven 与 engine_driven 的分工对照表；DeepSeek-V4 零额外配置；选用 engine_driven 的标志位。</li>
+<li>先上游，后插件：平台层合并进 LMCache 主线，Ascend C 内核留在 LMCache-Ascend 插件。</li>
+<li>三步上手：安装两包、启动缓存服务、vLLM 接连接器启动；验证方法与 DeepSeek-V4 的 4096 token 数据块；两份部署指南链接。</li>
+<li>验证范围与支持矩阵：硬件、软件栈、LMCache 配对、已验证模型、混合 Mamba 支持；范围限制（CacheBlend 与 CacheGen 在多进程模式下暂不支持）。</li>
+<li>下一步：双路径持续性能优化、engine_driven 扩展到压缩与混合 KV 布局、多节点与分布式缓存、新昇腾硬件发布即支持。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>主要限制在范围上：DeepSeek-V4 的压缩 MLA/DSA 布局与混合 Mamba/GDN 模型走 lmcache_driven，engine_driven 只验证了单格式 GQA/MHA 模型；混合模型 all 模式不在昇腾方案内；CacheBlend 与 CacheGen 在多进程模式下暂不支持。</li>
+<li>Atlas 300I Duo 明确不支持，Atlas 800I A5 只是计划支持。</li>
+<li>全文是功能与部署说明，没有给出任何性能数字（延迟、吞吐、命中率），无法据此评估多进程模式在昇腾上的实际收益。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>KV 缓存跨进程共享的部署范式：缓存进程独立 + 连接器接入 + IPC/共享内存两条数据面，适用于任何需要“缓存比引擎活得久”的推理服务。</li>
+<li>判断某条传输路径是否适用：看谁做拷贝与 KV 格式复杂度——服务端代搬运适合多平面/混合精度格式，工作进程自搬运适合单格式模型。</li>
+<li>平台层上游化、硬件内核留插件的分工模式，是国产加速器接入开源推理栈时减少分支维护成本的做法。</li>
+<li>部署验证的标准动作：同一长提示发两遍，看 Stored/Retrieved 日志与 External prefix cache hit rate 是否从零爬升；--no-enable-prefix-caching 隔离归因。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
