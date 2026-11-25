@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AITER Pin：把胶水核调参锁进包里 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>AITER Pin：把胶水核调参锁进包里</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://rocm.blogs.amd.com/software-tools-optimization/inductor-aiter-conversion/README.html">https://rocm.blogs.amd.com/software-tools-optimization/inductor-aiter-conversion/README.html</a></div>
+<h1>AITER Pin：把胶水核调参锁进包里</h1>
+<ul>
+<li>原文：<a href="https://rocm.blogs.amd.com/software-tools-optimization/inductor-aiter-conversion/README.html">An AITER Pin Keyed by Kernel Text: Faster Glue Than the Inductor Default</a>（AMD ROCm Blogs，2026-11-17 发表，2026-11-25 收藏）</li>
+<li>主题：Kernel 优化、并行策略（推理）、推理优化</li>
+<li>星级：4⭐</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>GEMM 与 attention 核早有离线调参路径，包围它们的胶水核没有。编译好的推理图里仍有一长串小 Triton 核——cast、拼接、归一化、激活、gather、直方图式更新。TorchInductor 生成这些核；开 autotune 时它会计时候选列表，把胜者写进按 fusion 编号 key 的缓存。问题是这个缓存活不过下一次编译：fusion 一重编号，key 就失效了。</p>
+<p>这篇把搜索搬出编译：离线搜参，只保留通过数值检查且 trace 更快的配置，按 @triton.jit 函数体的 SHA-256 指纹锁进包，随 AOTInductor 包发货。两台未具名生产模型上，胶水核相对 Inductor 单一默认配置快 1.388 倍（Model A）与 2.846 倍（Model B）；Model B 相对开列表 autotune 是 1.15 倍。真正有分量的是对照组：本体替换几乎不动，提速来自配置——把同一批配置放回编译器本体，速度一样快。</p>
+<h2>核心结论</h2>
+<ul>
+<li><strong>pin 是什么</strong>：kernel 文本加一个检查过的配置，写进包里。核按指纹匹配：@triton.jit 函数去掉数字后缀后的 SHA-256，截到 20 个十六进制字符。Inductor 给 fusion 重新编号时后缀会变，指纹不变。</li>
+<li><strong>三个阶段一次只改一样</strong>：Inductor（保留编译器本体，关掉胶水 autotune，每个核用单一默认配置）→ AITER（本体换成另一个参数相同的 Triton 函数，配置留在默认值）→ Tuned（锁定的配置放在那个本体上）。对照组把 pin 文件放回 Inductor 本体。</li>
+<li><strong>本体替换几乎不动</strong>：Model A 上 AITER 行 1.009×，Model B 上 0.989×；请求延迟中位数也留在原地（20.60 ms vs 20.57 ms；4.837 ms vs 4.866 ms）。提速来自配置。</li>
+<li><strong>同一批配置放回编译器本体，速度一样快</strong>：Model A 上编译器本体加 Tuned 配置是 1.365×，Tuned 是 1.338×；Model B 上是 2.55×，Tuned 是 2.846×。三个 SiLU 替换对这个加速比不是必需的。</li>
+<li><strong>开列表 autotune 的胜者不稳定</strong>：Model A 三次开列表编译测到 1618.9、1769.8、1863.5 µs，散布 245 µs，大于 Tuned 相对最快那次的优势；另一次编译还可能受 GPU 上第二个进程干扰。Model A 相对最快 autotune 编译的优势不列为加速比。</li>
+<li><strong>上限分析</strong>：Tuned 时 143 个核里 7 个达到或超过上限（字节/3.4 TB/s，1.7 µs launch 下限）的 80%，全是 1.26–2.09 µs 的短 dispatch。最重的核是直方图规约（192.3 µs，1% 上限，atomic 占主导）；把除数外提后它从 192.3 µs 降到 89.9 µs，但整包胶水不动（1453 vs 1466 µs），改动不进包。</li>
+</ul>
+<h2>机制：离线搜参怎么筛</h2>
+<p>每个核筛三轮、每轮五次重复；通过的三次最快成绩再确认七轮、每轮十次，与 baseline 交错跑。候选中位比 baseline 快至少 0.5%，且七轮里的最大值仍低于 baseline 的最小值，才保留。这个区间是最小值与最大值，不是置信区间。在这个噪声内，能填满 80 个计算单元的 grid 胜出。</p>
+<p>接受或拒绝一个本体的规则与配置 sweep 用同一条：整数输出保持相等；bf16 与 fp16 在改动是显式快速数学形式（如 sigmoid）时最多移动 1 个 ULP，其余情况保持逐位相同；fp32 保持逐位相同。atomic 在输出清零后比较（加法顺序会改变低位）；同时也是输入的 buffer 保持原样，清掉那些输入曾导致误拒。</p>
+<p>Model A：143 个核里 69 个 pointwise、64 个 persistent reduction、10 个 reduction；一共 5220 个候选，1329 个没通过逐位检查，没有一个编译失败。67 个核拿了新配置，另外 76 个保留 baseline。67 个里 12 个与编译器启发式给出的配置一致，另外 55 个不一致；55 个里 9 个只把 waves_per_eu 设为 2，另外 46 个改了 block 尺寸、warp 数或 stage 数——这 46 个就是搜索里更宽的那部分。</p>
+<p>Model B：25 个核里 17 个拿了新配置，6 个因为没有候选能过 0.5% 而保留之前的配置，2 个没有通过的候选。tile 不能超过手头的配置：XBLOCK 128 的 baseline 来自更早一次开列表编译，编译器自己的列表选中了它；离线 sweep 没有找到这个 128。</p>
+<h2>机制：trace 怎么读</h2>
+<p>核时间来自 rocprofv3 的 kernel trace。三个时钟保持分开：发出时间把每次 dispatch 求和（重叠算两次）；胶水占比是发出的胶水除以全部发出时间；设备忙碌时间是各区间的并集（一微秒里两个核在飞只算一次）；请求延迟是另一个 harness，profiler 关闭，取 benchmark 直方图的中位数。</p>
+<p>上限公式：<code>ceiling time = max(1.7 us, bytes / 3.4 TB/s)</code>，<code>percent = ceiling time / measured time</code>。1.7 µs 是 launch 下限；3.4 TB/s 是这块卡上一次大的 bf16 拷贝。所谓“达到上限”是指 80% 或以上。</p>
+<h2>实测数字</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Model A 胶水核（每前向）</td>
+<td>2134.3 → 1540.1 µs，1.388×（每 GPU 倍数均值；中位数 1.372×）</td>
+</tr>
+<tr>
+<td>Model B 胶水核（每前向）</td>
+<td>998.56 → 350.88 µs，2.846×</td>
+</tr>
+<tr>
+<td>Model B vs 开列表 autotune</td>
+<td>胶水 1.15×（404.3 → 350.88 µs）</td>
+</tr>
+<tr>
+<td>Model A 请求延迟</td>
+<td>20.57 → 15.25 ms（十流，一块 GPU）</td>
+</tr>
+<tr>
+<td>Model B 请求延迟</td>
+<td>4.866 → 2.935 ms</td>
+</tr>
+<tr>
+<td>Model A 对照组（本体换回编译器）</td>
+<td>1.365×，Tuned 1.338×</td>
+</tr>
+<tr>
+<td>Model B 对照组（本体换回编译器）</td>
+<td>2.55×，Tuned 2.846×</td>
+</tr>
+<tr>
+<td>Model A 开列表 autotune 三次编译</td>
+<td>1618.9、1769.8、1863.5 µs（散布 245 µs）</td>
+</tr>
+<tr>
+<td>Model A 胶水占比</td>
+<td>60.0% → 52.3%</td>
+</tr>
+<tr>
+<td>Model B 各类别（每前向）</td>
+<td>胶水 998.6 → 350.9 µs，hipBLASLt 758.1 → 593.3 µs，attention 146.4 → 118.0 µs</td>
+</tr>
+</tbody>
+</table>
+<h2>值得注意的点</h2>
+<ul>
+<li><strong>这套打法帮不上的情况</strong>：热路径仍是未调过的 GEMM、形状每步都在变，或者耗时是一次 launch、而本体没法把它融合掉。形状固定是前提：测得的配置就是生产启动时用的那个。</li>
+<li><strong>胶水与延迟的排名并不一致</strong>：1769.8 µs 那次开列表编译的延迟在表 4 里最慢。只看胶水时间会误判。</li>
+<li><strong>GEMM 也会动</strong>：Model A 上 hipBLASLt GEMM 动了 6 µs，Triton GEMM 模板动了 25 µs（模板选择在各阶段照抄，仍移动了）；Model B 上 hipBLASLt 降了 165 µs（703–855 µs → 575–635 µs，区间不重叠），所以“只有胶水变了”的说法在 Model B 上是错的。</li>
+<li><strong>单核优化不等于整包优化</strong>：直方图核从 192.3 µs 降到 89.9 µs，整包胶水反而从 1453 µs 涨到 1466 µs（38 个核慢了超过 1 µs，合计 +113.29 µs）。只动一个核、不动前向的本体改动不进包。</li>
+<li><strong>测试环境</strong>：GFX942（80 个计算单元），ROCm 7.2.2，PyTorch 2.9.1+rocm7.2.2，Triton 3.5.1+rocm7.2.2；Model A 一流、四块 GPU、五轮；Model B 六个 host 线程、一流。各表比较中位数，不比较百分位。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
