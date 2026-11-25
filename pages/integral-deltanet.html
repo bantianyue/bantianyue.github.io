@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Integral DeltaNet：线性注意力加一个积分态，长上下文理解反超 Transformer · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Integral DeltaNet：线性注意力加一个积分态，长上下文理解反超 Transformer</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/html/2611.32063v1">https://arxiv.org/html/2611.32063v1</a></div>
+<h1>Integral DeltaNet：线性注意力加一个积分态，长上下文理解反超 Transformer（4⭐，No.124）</h1>
+<ul>
+<li>原文：Integral DeltaNet: Improved Linear Attention with Adaptive Memory Integration</li>
+<li>原文链接：https://arxiv.org/html/2611.32063v1</li>
+<li>收藏日期：2026-11-25</li>
+<li>主题：线性注意力、长上下文、记忆机制</li>
+<li>一句话要点：在线性注意力的快速 delta 态之外再维护一个慢速积分态，读出时自适应组合两者，缓解记忆碰撞的同时保留远期有用信息；三键值示例中检索风险从单态下限 1/3 降到 0，1.3B 模型 LongBench 平均 15.0，超过 KDA 的 13.9 与 Transformer++ 的 5.6。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>线性注意力省显存的代价一直是记忆碰撞：固定尺寸状态压进的键值关联越多，互相干扰越重，衰减与定向覆写能降干扰，却把未来还用得上的信息一并丢掉。这篇把权衡算清楚了——一个三键值示例给出定量边界（线性注意力风险 2/3，Mamba-2、DeltaNet、门控 DeltaNet 最优门控下仍是 1/3），再用一个积分态把下限推到 0。方法只加一个状态、一个读出门，改动小；340M/15B 与 1.3B/100B 两档从头预训练的评测面很全（语言建模、常识推理、真实检索、合成检索、LongBench、长度外推、训练与解码效率），数字可复核。Kimi K3 已用 KDA/GDN-2 这类通道级 delta 规则，这篇是同一条技术线上的下一步。</p>
+<h2>核心结论</h2>
+<ul>
+<li>双态记忆：快速 delta 态 S_t 按 KDA 或 GDN-2 的通道级规则更新，捕捉当前键值关联；慢速积分态 X_t = S_t Diag(λ_t) + X_{t-1}Diag(1 − λ_t)，按通道加权累积 delta 态历史；读出 o_t = S_t(γ_t ⊙ q_t) + X_t((1 − γ_t) ⊙ q_t)，门控 γ_t 自适应分配两个状态的权重。</li>
+<li>定量边界（命题 1、命题 2）：三键值示例（k_1 = k_2 + k_3，值 Yes/No）中，线性注意力检索风险 2/3；单态线性读出满足 S_3k_1 = S_3k_2 + S_3k_3，Mamba-2、DeltaNet、门控 DeltaNet 最低风险均为 1/3；积分态保留早期 S_1 恢复首个 No 答案，Integral DeltaNet 最低风险为 0。</li>
+<li>规模化实测：Integral KDA 在 1.3B 规模上语言建模平均准确率 56.1（KDA 54.6、Transformer++ 54.7），WikiText-2 困惑度 15.00、LAMBADA 困惑度 9.16 均为同规模最优；LongBench 平均 15.0（KDA 13.9、Transformer++ 5.6），少样本 TRC 52.5 对 KDA 的 29.5；长度外推到 20K 时两款 Integral 变体在全部六个数据集、全部评测长度上困惑度最低。</li>
+<li>效率代价可控：解码显存与延迟基本不随上下文增长，64K 上下文下 Integral GDN-2 只需 2.99 GiB 与 4.79 毫秒每词，Transformer++ 需要 83.70 GiB 与 42.59 毫秒；积分态只加 0.14 GiB 显存。训练吞吐优先版接近基线吞吐，显存优先版激活显存 47.3–49.8 GiB，低于 Transformer++ 的 58.8 GiB。</li>
+<li>分块并行：双态递推有分块形式（块内并行、只传固定尺寸状态），基于 FlashLinearAttention 实现，硬件高效训练可行。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>§2 预备知识：线性注意力的并行式、递推式与分块式是同一计算的三副面孔；记忆碰撞来自非正交键的读出干扰，S_t k_j = v_j + Σ(k_i^T k_j)v_i。</li>
+<li>§2.2 记忆碰撞：DeltaNet 的 delta 规则、Mamba-2 的数据依赖衰减、门控 DeltaNet 的结合、KDA/GDN-2 的通道级门控，都在降低干扰与保留记忆之间权衡。</li>
+<li>§3.1 双态设计：积分率 λ_t 越小历史保留越久，读出门 γ_t 越大越倚重当前 delta 态；两个状态只在读出时组合，delta 态更新本身不受影响。门控由归一化隐状态经低秩投影（瓶颈秩）加 softplus/exp 参数化，初始化 λ ≈ 1 − γ ≈ 1/1024。</li>
+<li>§3.2 分块并行：块内 delta 态 S_[t]^r = S_[t]P_[t]^r + H_[t]^r，积分态用保留权重 ω 的加权前缀算子 P̄/H̄ 表达，块输出 O_[t] = Q̃<em>S S</em>[t]^T + Q̃<em>X X</em>[t]^T + Z_[t]。</li>
+<li>§4 实验：340M/15B 与 1.3B/100B FineWeb-Edu 从头训练；真实检索平均 Integral KDA 1.3B 为 37.3（KDA 35.4），但仍低于 Transformer++ 的 45.6；NIAH 上 Transformer++ 在 S-NIAH-1/2 的 8K 直接归零，Integral KDA 在 S-NIAH-1 的 8K 仍有 92.4。</li>
+<li>§5 相关工作：线性 RNN、线性注意力、神经记忆（在线优化视角，Titans/ATLAS、Muon）、互补记忆、迭代平均（SWA/Lookahead/无调度方法）；Integral DeltaNet 用积分态做自适应读出、不更新 delta 态，区别于无调度优化器。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>真实世界检索上两款 Integral 变体仍明显落后于 Transformer++（1.3B 平均 37.3 对 45.6），长上下文理解的优势没有完全转化到检索任务。</li>
+<li>吞吐优先版激活显存很高（Integral KDA 159.3 GiB、Integral GDN-2 165.5 GiB），要降显存必须用显存优先版并付出重算代价。</li>
+<li>解码延迟高于各自基线（Integral KDA 4.63 毫秒对 KDA 的 3.34 毫秒），读出两个状态有固定开销。</li>
+<li>消融实验（积分态、输入依赖读出、通道级门控的效果）在附录 B，公众号版按规则未收录；想看消融数字直接读原文附录。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>快慢双态 + 自适应读出的设计模式：任何单态递推记忆都可以在读出侧加一个滑动平均态，保留被后续更新削弱的信息，而不动更新规则本身。</li>
+<li>三键值示例的定量分析方法：用最小构造（k_1 = k_2 + k_3）把单态模型的理论下限算出来，再证明新结构突破下限，是论证记忆机制改进的干净范式。</li>
+<li>门控初始化口径：读出权重初始几乎全压在快态、慢态缓慢累积（λ ≈ 1 − γ ≈ 1/1024），训练中再学会分配，新增记忆结构接入已有架构时可照搬。</li>
+<li>分块并行推导模板：保留权重 ω 与加权前缀算子 P̄/H̄ 的写法，可用于把其他双态递推改造成硬件高效训练形式。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
