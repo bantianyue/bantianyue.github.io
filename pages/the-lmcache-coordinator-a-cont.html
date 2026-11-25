@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LMCache Coordinator：全机群 KV 缓存的控制面 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>LMCache Coordinator：全机群 KV 缓存的控制面</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://blog.lmcache.ai/en/2026/11/11/the-lmcache-coordinator-a-control-plane-for-fleet-wide-kv-cache/">https://blog.lmcache.ai/en/2026/11/11/the-lmcache-coordinator-a-control-plane-for-fleet-wide-kv-cache/</a></div>
+<h1>LMCache Coordinator：全机群 KV 缓存的控制面（No.128，4⭐）</h1>
+<ul>
+<li><strong>原文</strong>：https://blog.lmcache.ai/en/2026/11/11/the-lmcache-coordinator-a-control-plane-for-fleet-wide-kv-cache/</li>
+<li><strong>收藏日期</strong>：2026-11-25</li>
+<li><strong>主题</strong>：推理可观测 / 并行策略（推理）</li>
+<li><strong>标签</strong>：推理可观测</li>
+<li><strong>一句话要点</strong>：Coordinator 把 LMCache 从“每节点一台彼此看不见的缓存服务器”变成“全机群一张可编程的缓存”：事件流是唯一的事实来源，共享视图是共同的真相，可插拔控制器是策略，动作是普通 HTTP 调用。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>推理系统里 KV 缓存长期是每节点各自为政：同一块 KV 在多个节点重复存、重复算，没人知道全机群到底有什么、哪里有空闲。这篇是 LMCache 控制面的设计说明书，讲清了一个控制面如何在不进请求路径的前提下，让几十个节点的缓存像一张缓存那样被查找、配额、驱逐、预取和观测。设计上最值得借鉴的是三点：事件流即事实来源（每服务器序号 + 幂等应用，丢事件、重复事件、重启都有明确语义）、视图与控制器分离（共享视图是契约，控制器是可替换的策略件）、可观测性从“视图完整吗、视图多旧了”出发而不是只看请求延迟。</p>
+<h2>核心结论</h2>
+<ul>
+<li><strong>控制面不在请求路径上</strong>：KV 查找走本地缓存或 L2，Coordinator 只提供机群级视图与策略；它宕机时服务器继续服务，全机群功能等待。</li>
+<li><strong>事件流是唯一的事实来源</strong>：每台多进程服务器按自身序号发事件（PUT/DELETE/心跳），Coordinator 派生出注册表、键目录、用量三张视图；事件重复丢弃、跳号标记可能过期、重启从检查点 + Kafka 偏移量恢复。</li>
+<li><strong>控制器是可插拔的策略件</strong>：驱逐、配额、钉住、预取各是一个控制器，只依赖共享视图、只通过 HTTP 动作改写缓存；树外控制器（in-tree / out-of-tree）共用同一套规则。</li>
+<li><strong>视图可以滞后，但必须诚实</strong>：键目录可能晚几毫秒才看到新存入的 KV，策略据此决策即可；可观测性要回答“视图完整吗、视图多旧了、循环还活着吗、每个控制器在干什么”。</li>
+<li><strong>从知道到决策的六项能力</strong>：状态、查找、策略、动作、规模、可靠性；今天多半停在“知道”，下一步是按负载定制的策略、跨节点提升与搬移、更便宜的查找与分层多 Coordinator。</li>
+</ul>
+<h2>分节</h2>
+<ol>
+<li><strong>背景：三段演进</strong>——单进程缓存 → 多进程模式（节点内共享）→ Coordinator（机群级控制面）；每一段解决了上一段的问题，也留下了新的短板。</li>
+<li><strong>架构：事件进、视图出</strong>——服务器发事件，Coordinator 经事件门、消费者、视图三层派生注册表、键目录与用量；Kafka 是可选的传输，单机可用内存队列。</li>
+<li><strong>查找：一块 KV 的旅程</strong>——跟随一块 KV 走一遍系统：存入、注册、查找、命中与未命中、跨节点取回。</li>
+<li><strong>控制器：驱逐、配额、钉住、预取</strong>——四个内置控制器的规则与边界；控制器只能依赖视图，不能彼此通信。</li>
+<li><strong>容错：安全地犯错</strong>——服务器重启（incarnation 围栏 L1、保留 L2）、事件重复或丢失（序号 + 幂等）、Coordinator 重启（检查点 + 偏移量重放）。</li>
+<li><strong>可观测性</strong>——四个问题、每部分一份 stats() 快照、指标与状态页同源；/healthz 不因降级失败，没有等待预热的就绪检查。</li>
+<li><strong>未来方向</strong>——更聪明的策略（多轮对话、多智能体、RL rollout、RAG 各有专属策略）、更丰富的动作（提升、降级、移动、复制）、更便宜的查找（gRPC）、随规模增长走向机群之外（分层、热备、跨数据中心）。</li>
+</ol>
+<h2>局限</h2>
+<ul>
+<li>今天的高可用只是单个实例快速、正确的重启，不是热备；Kubernetes 部署须用 replicas: 1 + Recreate，默认 RollingUpdate 会短暂跑两个 Coordinator 分食事件。</li>
+<li>策略层今天还很简单（配额下的 LRU 驱逐、明确请求的预取），按负载定制的策略与自演进智能体仍是未来方向。</li>
+<li>查找走 HTTP + JSON，机群长大后单次调用成本值得重新审视（gRPC 是候选）。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li><strong>事件溯源式控制面</strong>：每服务器序号 + 幂等应用 + 检查点存偏移量，这套组合可直接复用到任何“多写者、单事实来源”的控制面设计。</li>
+<li><strong>视图与策略分离</strong>：共享视图作契约、控制器作可替换策略件，换策略不用改数据路径；回放真实流量是安全的策略试验台。</li>
+<li><strong>可观测性四问</strong>：视图完整吗、视图多旧了、循环还活着吗、每个控制器在干什么——比只看请求延迟更贴合控制面的真实风险。</li>
+<li><strong>故障语义清单</strong>：incarnation 围栏、30 秒心跳超时、跳号标记过期、L2 随重启保留——每种故障都有明确的、可测试的处理。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
