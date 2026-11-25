@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一个模型一个megakernel：agent为每个checkpoint写专属引擎 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>一个模型一个megakernel：agent为每个checkpoint写专属引擎</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://dangxingyu.github.io/megakernel">https://dangxingyu.github.io/megakernel</a></div>
+<h1>一个模型一个megakernel：agent为每个checkpoint写专属引擎</h1>
+<ul>
+<li>原文：<a href="https://dangxingyu.github.io/megakernel">A Megakernel per Model</a>（dangxingyu.github.io，2026-11-18 发表，2026-11-25 收藏）</li>
+<li>主题：并行策略（推理）、Kernel 优化、推理优化</li>
+<li>星级：4⭐</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>通用推理引擎（vLLM、SGLang）用同一个调度器与同一套 kernel 库服务所有模型。这篇反过来做：让 coding agent 为一块 GPU 上的一个 checkpoint 写专属 engine，形式是一个 megakernel——一个 GPU 程序跑完整个 decode 循环，token 之间不回到 host。八个模型（8B 到 594B 参数）上，单序列时 engine 的速度是最快通用 engine 的 1.13–1.77 倍；生产 trace 上，99–100% 的请求满足 SLO，SGLang 是 82–85%。</p>
+<p>真正值得学的是验证框架：agent 优化的是 evaluator 奖励的东西，evaluator 的每个漏洞都会变成捷径。这套 test suite agent 改不了——engine 必须先在数值上与 FP64 reference 一致、通过独立审计，才会被计时。没有这套框架，agent 优化的只是 evaluator 的漏洞。</p>
+<h2>核心结论</h2>
+<ul>
+<li><strong>一个模型一个 megakernel</strong>：整个 decode step 装进一个 kernel，agent 就能跨算子边界做融合、预取与提前调度。batch size 为 1 时，track A 在每个模型上都是最快通用 engine 的 1.13–1.77 倍；batch size 为 8 时，八个模型中有六个加速比更小（North Mini Code 1.02×、gpt-oss-120b 1.08×）。</li>
+<li><strong>Track A vs Track B</strong>：Track A 要求数据流与参考实现一致（权重保持 checkpoint 格式，activation 与 KV cache 用通用格式），只改变计算在 GPU 上的组织方式；Track B 更宽松，只要求函数在精确算术下不变，允许改变存储方式与 load 时预先计算的内容。有损量化或剪枝不算。</li>
+<li><strong>Track B 的主角是无损 12-bit 权重</strong>：BF16 用 8 bit 表示指数，但训练好的矩阵里同一行权重只跨几个 binade。Qwen3-8B 上的 agent 把每个权重无损编码成 12 bit，寄存器内解码，每 token 权重流量减少四分之一。Qwen3-8B 上 5.34→4.52 ms（−15%）。同期工作 SpecPilot 也发现了同样格式；Claude Opus 5.5 agent 在完整 decode megakernel 内部独立发现了它。</li>
+<li><strong>服务真实流量</strong>：Qwen3-8B 与 Inkling-2-Small 的 serving engine 把调度搬到 GPU 上（continuous batching、kernel 内 chunked prefill、paged KV cache、prefix caching）。回放 Mooncake tool-and-agent trace 前 300 秒：每秒 1、2、4 请求时 SLO 达成率 100%，每秒 8 个时 99.2%；SGLang 是 82–85%。差距来自卡顿：SGLang 中正在 decode 的请求要排在长 prompt 的 prefill 后面，最长等 2.3–4.4 s；megakernel 最长卡顿 0.08–0.15 s。</li>
+<li><strong>验证框架</strong>：reference 用 FP64 计算（显存放不下时用 FP32）；容差以标准 BF16 实现为基准，logit 误差中位数与 p99 允许 2×，KL divergence 允许 4×，top-1 agreement 相差不超过一个百分点；hidden set（自然文本、代码、应用题）延伸到位置 2,000，run 看不到；batch 倒序重跑 logits 必须逐位相同；独立 agent 审计源码。除三个 Inkling-2-Small engine 外，展示的每个 engine 都用当前 suite 重新测过：20 个中有 20 个通过全部检查。</li>
+<li><strong>agent 怎么做到的</strong>：19 个 run、458 个 agent-hour、675 次 submission。第一个通过测试的 engine 比最快通用 engine 慢；第一次大提升来自把整个 decode step 融合进一个 kernel；之后大部分工作针对内存系统（哪些 load 走哪级 cache、哪个阶段预取什么、attention 运行时空闲的 thread block 做什么）。</li>
+</ul>
+<h2>机制：megakernel 长什么样</h2>
+<p>vLLM 与 SGLang 每个 decode step 回放一次 CUDA graph，host 每个 token 发起一次 launch；step 里的各个算子是独立 kernel，一个结束后下一个才开始，每个边界上 GPU 都要排空再填满；token 之间 host 读取结果并调度下一个 step。steady-decode megakernel 一次 launch 跑很多个 token；各个阶段之间用 grid barrier 隔开，选下一个 token 与对 token 的循环都在 kernel 内部完成。</p>
+<p>batch size 为 1 的 decoding 受 HBM 带宽限制。Qwen3-8B 与 H100 上，以峰值带宽（3.35 TB/s）把 15.1 GB 的 BF16 权重读一遍要 4.52 ms；track-A engine 每个 token 5.13 ms，达到这个上界的 88%。</p>
+<h2>机制：Track B 用了什么</h2>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>效果</th>
+<th>与 track A 的 logits 对比</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>flint</td>
+<td>−2.9%（head sketch）</td>
+<td>逐位相同</td>
+</tr>
+<tr>
+<td>Qwen3.8-27B</td>
+<td>−9%（12-bit 权重），之后 −5.6%</td>
+<td>逐位相同</td>
+</tr>
+<tr>
+<td>Qwen3-32B</td>
+<td>−11%（10.12→9.00 ms），12-bit 权重</td>
+<td>逐位相同</td>
+</tr>
+<tr>
+<td>gpt-oss-120b</td>
+<td>−5%（head sketch）</td>
+<td>逐位相同</td>
+</tr>
+<tr>
+<td>Inkling-2-Small</td>
+<td>−0.4%</td>
+<td>逐位相同</td>
+</tr>
+<tr>
+<td>Qwen3-8B</td>
+<td>−15%（5.34→4.52 ms），12-bit 权重</td>
+<td>非逐位相同：residual stream 保持 FP32（track A 是 BF16），精度更高</td>
+</tr>
+<tr>
+<td>North Mini Code</td>
+<td>−10%（12-bit 权重），−4%（head sketch）</td>
+<td>非逐位相同：少数超出 12-bit 范围的权重单独补算，数值相同，舍入顺序不同</td>
+</tr>
+<tr>
+<td>gpt-oss-20b</td>
+<td>−14%（1.87→1.61 ms）</td>
+<td>非逐位相同：router 权重预先乘上 norm 权重并以 FP32 存储，归一化后的输入不再舍入到 BF16</td>
+</tr>
+</tbody>
+</table>
+<p>表里反复出现两种技术：LM head 的 certified 低精度 sketch，用来筛出下一个 token 的候选；第 0 层的 per-token 查找表，因为这一层的输入只取决于 token 的 embedding。checkpoint 本身已经压缩过（Inkling-2-Small 与 gpt-oss 的 4-bit expert）时，track B 的收益很小。</p>
+<h2>机制：验证框架（test suite）</h2>
+<table>
+<thead>
+<tr>
+<th>检查</th>
+<th>对比对象</th>
+<th>通过条件</th>
+<th>运行时机</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>每个位置的 logits</td>
+<td>FP64 计算的模型（放不下时用 FP32），公开序列和 hidden 序列</td>
+<td>相对误差的中位数和 p99 ≤ BF16 实现的 2×</td>
+<td>每次 submission</td>
+</tr>
+<tr>
+<td>分布</td>
+<td>同一个 reference</td>
+<td>KL divergence 的中位数和 p99 ≤ BF16 实现的 4×；top-1 agreement 相差不超过一个百分点</td>
+<td>每次 submission</td>
+</tr>
+<tr>
+<td>Hidden set</td>
+<td>自然文本、代码和应用题，到位置 2,000，从不给 run 看</td>
+<td>以上全部；只报告通过或失败</td>
+<td>每次 submission</td>
+</tr>
+<tr>
+<td>运行中</td>
+<td>它自己逐步 greedy 生成的 token</td>
+<td>decode loop 给出相同的 token；计时运行中取出的 logits 与 reference 吻合</td>
+<td>每次 submission</td>
+</tr>
+<tr>
+<td>Slot 顺序与重复</td>
+<td>序列倒序的同一个 batch</td>
+<td>logits 逐位相同</td>
+<td>每次 submission</td>
+</tr>
+<tr>
+<td>batch size、满 context、重启</td>
+<td>新启动的 engine</td>
+<td>1 到 8 个序列都在阈值内；满 context 之后和重启之后逐位相同</td>
+<td>发布前</td>
+</tr>
+<tr>
+<td>审计</td>
+<td>一个独立的 agent 阅读源码</td>
+<td>没有违反任何规则；它自己的实验能复现分数</td>
+<td>发布前</td>
+</tr>
+</tbody>
+</table>
+<p>审计确实发现了当时 evaluator 放过的问题，每一个都促成了一处修正：</p>
+<ul>
+<li>三个计时 prompt 中有两个会让 Qwen3.8-27B 陷入 draft 能预测的重复循环：multi-token decoding 得分 0.415 ms/token，在自然文本上是 3.71 ms。现在报告自然文本上的数字。</li>
+<li>三个标为逐位相同的 track-B engine 其实不是：flint 的 engine 在 10.8% 的位置选了不同的 top-1 token。flint 重新跑过，现在逐位相同。</li>
+<li>超过 context 上限时不报错：Inkling-2-Small 覆盖了其他序列的 KV cache；flint 返回空输出。engine 现在拒绝这类请求。</li>
+<li>第一个 Qwen3-8B run 之后加的一项检查：1,024 个位置中有一个超出容差，attention score 被两次舍入到 BF16。一个 3 小时的 run 修好了它，速度不变。</li>
+<li>serving engine 不校验输入：前缀用 64-bit hash 匹配、不比较 token；没有越界检查。Inkling-2-Small 在延长的 run 中修好；Qwen3-8B 正在修。</li>
+<li>高负载下的 Qwen3-8B track-A serving：17 次试验中有 12 次，token 与同一请求单独运行时不同。与上面的修复一起排查中。</li>
+</ul>
+<p>计时口径：同一组对比的所有系统在同一个 job 里、同一块 GPU 上依次运行；跑三轮，每轮重启所有 server，并由不同的系统先跑；每个系统都放在 OpenAI 兼容的 streaming endpoint 后面，由同一个 client 计时；prompt 以 token id 给出，每个请求恰好生成 1,024 个 token；vLLM 与 SGLang 用发布版本和官方推荐的参数，找到更快配置的地方就用更快的；engine 通过正确性检查之后才会被计时。</p>
+<h2>实测数字</h2>
+<table>
+<thead>
+<tr>
+<th>指标</th>
+<th>数值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Track A 单序列加速比（vs 最快通用引擎）</td>
+<td>1.13–1.77×（8 个模型）</td>
+</tr>
+<tr>
+<td>Track B 最高加速比</td>
+<td>2.05×（gpt-oss-20b，vs vLLM）</td>
+</tr>
+<tr>
+<td>Qwen3-8B 每 token 时间</td>
+<td>5.13 ms，达到 HBM 上界（4.52 ms）的 88%</td>
+</tr>
+<tr>
+<td>Qwen3-8B track B</td>
+<td>5.34→4.52 ms（−15%，12-bit 权重）</td>
+</tr>
+<tr>
+<td>Inkling-2-Small SLO 达成率</td>
+<td>100%（1–4 请求/秒）、99.2%（8 请求/秒）；SGLang 82–85%</td>
+</tr>
+<tr>
+<td>Inkling-2-Small 最长卡顿</td>
+<td>0.08–0.15 s；SGLang 2.3–4.4 s</td>
+</tr>
+<tr>
+<td>Qwen3-8B SLO 达成率</td>
+<td>95–97%（1–2 请求/秒）、90–93%（3 请求/秒）；SGLang/vLLM 68–75% 与 59–68%</td>
+</tr>
+<tr>
+<td>Qwen3-8B 最长卡顿</td>
+<td>0.09–0.13 s</td>
+</tr>
+<tr>
+<td>验证通过</td>
+<td>20/20（除 3 个 Inkling-2-Small engine）</td>
+</tr>
+<tr>
+<td>agent 投入</td>
+<td>19 个 run、458 agent-hour、675 次 submission</td>
+</tr>
+</tbody>
+</table>
+<h2>agent 的优化步骤（按模型）</h2>
+<ul>
+<li><strong>Qwen3-8B</strong>（track A 21.05→5.13 ms，30 步；track B 4.52→3.81 ms，25 步）：整个 decode step 进一个 kernel（7.37→6.46 ms）；RMSNorm 融进前一个 residual-add 的 epilogue（6.14→5.95 ms）；无损 12-bit 权重，HBM 读取 15.1→11.4 GB（5.34→4.52 ms）。</li>
+<li><strong>flint</strong>（track A 3.00→1.39 ms，31 步；track B 2.19→1.35 ms，26 步）：重划 attention 的 V 累加（3.00→1.90 ms）；shared memory carve-out 224→128 KB（1.90→1.68 ms）；softmax 归一化一次倒数加 FMA 修正（1.61→1.55 ms）；track B 用 certified int8 LM-head sketch（1.47→1.40 ms）。</li>
+<li><strong>Qwen3.8-27B</strong>（track A 16.99→8.44 ms，29 步；track B 10.69→7.17 ms，35 步）：去掉三处实测开销（16.99→10.83 ms）；split-K 交接不再做 64-bit 整数除法（9.87→9.50 ms）；精确 12-bit 权重（10.69→8.67 ms）。</li>
+<li><strong>Inkling-2-Small</strong>（4 × B200）：768-thread block、连续 GEMV 范围、8 路向量化 residual 更新（6.56→5.32 ms）；tensor-parallel 部分和以 BF16 交换（3.96→3.62 ms）；carve-out 222→121 KB 还给 L1（3.89→3.65 ms）；output-gate projection 挪到 attention 阶段（3.40→3.31 ms）；track B 用 12-bit LM head 与第 0 层预计算（4.05→3.99 ms，3.97→3.30 ms）。</li>
+</ul>
+<h2>值得注意的点</h2>
+<ul>
+<li><strong>适用面很窄</strong>：steady-decode engine 最多 8 个序列与 2,048-token context，每个 pass 只读入 prompt 的一个 token，sampling 在 kernel 外面做（慢 1–11%）。32 并发请求时 SGLang 每秒输出 3,338 个 token，steady-decode engine 是 1,427；16,384-token 生成或 32,000-token prompt 都需要 serving engine，它在 32,000-token prompt 上的首 token 时间是 0.70 s，SGLang 是 0.41 s。serving engine 在生产 trace 下首 token 尾部时间与 token 间隔中位数都比 SGLang 长（p99 首 token 3.4–4.6 s vs 2.0–2.2 s；token 间隔中位数 28–60 ms vs 9–18 ms）。</li>
+<li><strong>Qwen3-8B serving engine 仍用 hash 匹配 prompt 前缀</strong>，并依赖 mkserve 拒绝无效请求。所有数字都来自单个节点，跑了两到三轮。</li>
+<li><strong>下一步</strong>：做一个小 pass 和 steady-decode kernel 一样快的 serving engine——1–8 请求 decode 时达到 steady-decode 速度；prompt chunk 处理得足够快，使负载下首 token 时间与 token 间隔不差于 SGLang；kernel 内 sampling。</li>
+<li><strong>可复用</strong>：megakernel-zoo（https://github.com/dangxingyu/megakernel-zoo）提供 test suite 与在新 checkpoint 上启动 run 的工具，通过 suite 的 engine 可以贡献回 zoo。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
