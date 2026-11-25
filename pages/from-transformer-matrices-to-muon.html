@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>从 Transformer 矩阵流转到 Muon：SGD、AdamW 与谱正交化的完整推导 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>从 Transformer 矩阵流转到 Muon：SGD、AdamW 与谱正交化的完整推导</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://mizore.blog/posts/from-transformer-matrices-to-muon/">https://mizore.blog/posts/from-transformer-matrices-to-muon/</a></div>
+<h1>从 Transformer 矩阵流转到 Muon：SGD、AdamW 与谱正交化的完整推导</h1>
+<ul>
+<li>原文：https://mizore.blog/posts/from-transformer-matrices-to-muon/</li>
+<li>收藏：2026-11-25</li>
+<li>主题：训练核心流程、优化器</li>
+<li>一句话要点：从显存四类张量的分工出发，经反向传播外积结构与诱导范数理论，完整推导出 Muon 为什么是对二维权重唯一正确的优化器。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这是一篇少见的“从第一性原理推到底”的优化器长文：不满足于罗列 SGD→AdamW→Muon 的更新公式，而是把每一步的数学动机都算清楚——RMSNorm 为什么钉死输入尺度、梯度矩阵为什么天生奇异值偏斜、AdamW 为什么在几何上等价于逐元素 ℓ∞ 最速下降、Shampoo 双边 −1/4 次幂为什么化简后恰好是半正交极因子 UVᵀ。全篇 7 节、17 图、2 表、2 代码，配一组可直接运行的单文件 PyTorch 实现，读完即能复现。</p>
+<h2>核心结论</h2>
+<ul>
+<li>显存四类张量分工明确：静态参数（权重）、动态激活（前向驻留）、KV Cache（推理专属）、训练状态（优化器矩）。优化器只改写静态参数；KV Cache 把解码累计乘加从 O(N²D² + N³D) 降到 O(N D² + N²D)，6,758.5M → 109.7M MACs（−98.4%）。</li>
+<li>RMSNorm 两条几何性质：前向把输入均方根钉在 1 附近；反向梯度与输入径向正交（xᵀ∇ₓL = 0）且自带 1/r(x) 阻尼。</li>
+<li>线性层反向传播双公式 G = ΔᵀX 与 ∇ₓL = ΔW；梯度是秩一外积之和 G = Σₙ δₙxₙᵀ，齐夫长尾词频使奇异谱严重偏斜（2 词元手算即差 67 倍）。</li>
+<li>邻近最速下降统一框架：SGD 是欧氏范数下的解；动量把震荡方向压到 (1−β₁)/(1+β₁) ≈ 0.0526；Nesterov 前瞻等价于 M̃ₜ = gₜ + μMₜ；Adam 偏差修正不可省（第 1 步不修正暴涨 3.16 倍）。</li>
+<li>二次正则不等价定理：L₂ 正则等价于权重衰减 ⟺ 预条件矩阵 P = cI；Adam 里耦合 L₂ 让活跃参数逃避衰减、安静参数被重压，AdamW 把衰减解耦到参数上才正确。</li>
+<li>AdamW 关掉记忆即 SignSGD = 逐元素 ℓ∞ 最速下降；2×3 手算 G 经 Adam 坍缩成秩 1（σ₂ = 0），而 UVᵀ 满秩（σ₁ = σ₂ = 1）。</li>
+<li>RMS→RMS 诱导范数 ‖ΔW‖ = √(d_in/d_out)·σ₁(ΔW) 下的最速下降解恰好是半正交极因子 UVᵀ；同一理论导出分流规则：嵌入 ℓ₁→RMS、分类头 RMS→ℓ∞ 按行解耦，留给 AdamW。</li>
+<li>牛顿-舒尔茨五次多项式 (3.4445, −4.7750, 2.0315)，5 步尾部放大 484 倍（经典系数仅 23.2 倍），奇异值收拢进 [0.68, 1.20]；Frobenius 预归一化锁 [0,1]，高瘦矩阵先转置省 &gt;90% 算力。</li>
+<li>Moonshot 对齐：Muon 乘 0.2√max(A, B) 后与 AdamW 共用学习率；解耦权重衰减使权重均方根稳定在 √(0.02η/λ)。</li>
+<li>Roofline：Muon 相对主干算力仅 0.5%–2%，且省掉二阶矩 V；实测省约 48% 训练词元。受控实验：Muon+AdamW 检索率 77.0%，AdamW 23.7%，SGD/Momentum 卡在 7.3%–7.4%。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>一、显存四类张量与自回归流水线：链式法则、Pre-RMSNorm、√d_k 缩放、Prefill/Decode、6 层模型显存账本、KV 曲线。</li>
+<li>二、RMSNorm 尺度不变性与矩阵反向传播：梯度正交、交叉熵导数、G = ΔᵀX、2 词元手算。</li>
+<li>三、邻近最速下降与逐元素优化器四代推演：SGD 病态曲率、动量与 Nesterov、AdaGrad→RMSProp→Adam、AdamW 解耦权重衰减。</li>
+<li>四、从逐元素范数到二维算子谱范数：AdamW 的 ℓ∞ 几何、Shampoo 化简、诱导范数推导、参数分流规则。</li>
+<li>五、牛顿-舒尔茨奇数次多项式迭代：奇多项式保 U、Vᵀ、经典系数与 Muon 系数权衡、RMS 对齐与权重衰减。</li>
+<li>六、硬件算术强度与四代优化器受控对比：AdamW 带宽受限（0.43 FLOPs/Byte）、Muon 相对主干 0.5%–2%、诱导头检索实验。</li>
+<li>七、单文件完整 PyTorch 实现：RMSNorm、多头因果注意力、NS5、Moonshot 版 Muon、按诱导范数分流、50 步训练循环，损失从 ln(1000)≈6.91 降到 4.5468。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>受控实验是合成小任务（V=128、T=32、D=64、双层 4 头），77.0% vs 23.7% 的差距在真实大模型预训练中会缩小，Moonlight 约 48% 词元节省才是规模化口径。</li>
+<li>五次多项式系数是等波纹逼近的工程折中，φ(1) = 0.701 ≠ 1，奇异值只收拢到窄带而非精确归一。</li>
+<li>文中“AdamW 稳态更新 RMS ≈ 0.229”基于梯度独立同分布假设，真实训练带时间相关性，实测落在 0.2–0.4 之间。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>判断某层该用 Muon 还是 AdamW：看输入输出空间的诱导范数是否按行解耦——RMS→RMS 的隐藏层用 Muon，ℓ₁→RMS 的嵌入与 RMS→ℓ∞ 的分类头留给 AdamW。</li>
+<li>调 Muon 学习率时先乘 0.2√max(A, B) 对齐 AdamW 的单元素更新 RMS，再共用同一套调度器。</li>
+<li>手算小矩阵验证优化器几何：2×3 的 G 即可暴露 Adam 坍缩秩 1 与 UVᵀ 保满秩的区别。</li>
+<li>写优化器科普时可用“范数球最速下降”统一叙事：换范数即换优化器，Frobenius→SGD、ℓ∞→AdamW、谱范数→Muon。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
