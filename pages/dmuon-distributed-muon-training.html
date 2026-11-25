@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DMuon：分布式 Muon 训练，端到端步时间只比 AdamW 多 2% · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>DMuon：分布式 Muon 训练，端到端步时间只比 AdamW 多 2%</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/html/2606.27153v1">https://arxiv.org/html/2606.27153v1</a></div>
+<h1>DMuon：分布式 Muon 训练，端到端步时间只比 AdamW 多 2%</h1>
+<ul>
+<li>原文：https://arxiv.org/html/2606.27153v1</li>
+<li>收藏：2026-11-25</li>
+<li>主题：并行策略（训练）</li>
+<li>一句话要点：DMuon 把 Muon 优化器做成分布式训练的即插即用模块：每个矩阵只由一个 owner 跑 Newton–Schulz，通信按节点内外两级重叠，Gram 空间对称核加自调优，端到端步时间平均只比 AdamW 多 2%，优化器步相对 vanilla Muon 快 6.85–163 倍。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>Muon 的算法承诺已经确立（Moonlight 约 2 倍 AdamW 计算效率，Kimi-K2 与 DeepSeek-V4 已在生产规模采用），但分布式部署的代价一直是个实际障碍：Newton–Schulz 迭代要整块矩阵，与分片训练逐元素的隐含契约直接冲突，朴素的 gather-then-compute 让优化器步比前向加后向还贵。这篇的价值在于它把这个问题当成系统工程完整拆开：owner 执行去重、细粒度通信重叠、Gram 空间对称核加自调优、实测成本驱动的负载均衡，四条线各给一个可复现的配方，并且把四组生产负载、8–256 卡的完整 24 行实测表全部公开。读完能直接理解"分布式优化器"这件事的系统侧全貌，而不是只记住一个加速比。</p>
+<h2>核心结论</h2>
+<ul>
+<li>端到端步时间平均只比 AdamW 多 2%（四组生产负载、8–256 卡 A800-SXM4-80GB、bf16）；相对 gather-then-compute 的 vanilla Muon，端到端步时间快 1.48–3.01 倍，优化器步快 6.85–163.00 倍。</li>
+<li>vanilla Muon 每步时间是 AdamW 的 2.2 倍，DMuon 是 1.02 倍；步时间对齐后，DMuon 的训练损失低于 AdamW。</li>
+<li>核心更新规则不变：Wₜ₊₁ = Wₜ − η·NSₖ(Mₜ)，NS 迭代 Xᵢ₊₁ = aXᵢ + bXᵢXᵢᵀXᵢ + c(XᵢXᵢᵀ)²Xᵢ，k=5 步，降精度执行。</li>
+<li>粒度错配是根因：分片训练把矩阵切到各 rank，Newton–Schulz 却要求整块矩阵在一台设备上算 XXᵀ；gather-then-compute 带来矩阵物化与重复正交化两个代价，后者让聚合优化器计算乘以冗余 rank 数。</li>
+<li>owner 式执行：每个矩阵指定一个 owner，只算一次 Muon 更新；非 owner 只在需要时物化参数。一步分四个阶段：参数物化、梯度路由、owner 侧 Muon 更新、异步发布。</li>
+<li>通信按节点内外两级组织：4×8 网格上 gpu(w) = w mod 8，node(w) = (w mod 4) ⊕ (⌊w/8⌋ mod 4)，XOR 轮换 owner 节点；前向节点间广播提前发、节点内广播延迟到消费前；后向五阶段 bcast_inter → bcast_intra → compute → reduce_intra → reduce_inter 跨层流水。</li>
+<li>Gram 空间迭代：Gᵢ₊₁ = PᵢGᵢPᵢ，m &lt; n 时主导成本从 O(m²n) 降到 O(m³)；小矩阵按形状批量推进；SYRK 只算下三角、epilogue 重建上三角，算术几乎减半；元素级操作融进 epilogue；TileLang 与 CUTE DSL 自调优、持久核缓存按形状键控。</li>
+<li>负载均衡用实测成本：c_{s,b} 是形状 s 用批量 b 处理一批的实测时间；MILP 最小化预测 makespan（min max_r Σ c·x，约束 Σ b·x = n_s，x ∈ ℤ≥0），SciPy 求解一次，超阈值回退贪心。</li>
+<li>实现约 1 万行 Python，三调用接入（import dmuon、dedicate_params、Muon），与原生 FSDP2 组合不改源码；TP 嵌套第二级 owner；非 owner 用零尺寸占位符；默认 Polar Express 系数、k=5；NS 迭代用 fp16（比 bf16 多 3 位尾数、零延迟代价），更新转 fp32 应用于 fp32 主权重。</li>
+<li>增速分量（Wall-OSS-0.5、128 卡逐个禁用）：对称 Gram 核 48%、owner 调度与负载均衡 32%、自调优与 NS 批量 16%。</li>
+<li>局限：单卡训练收益弱（优化器步仍降约 2 倍，但用不上分布式好处）；只去掉系统开销，不改算法、不改收敛。</li>
+</ul>
+<h2>逐节要点</h2>
+<ul>
+<li>引言：逐元素契约与 Muon 的冲突；VLA 短上下文放大优化器开销；五条贡献；图 1 总览。</li>
+<li>背景：Muon 更新规则与 NS 迭代；ZeRO、FSDP2/HSDP、张量并行三种分片抽象；粒度错配图。</li>
+<li>问题：gather-then-compute 的矩阵物化与重复正交化；owner 思路与剩余瓶颈。</li>
+<li>系统设计总览：图 4 对比基线与 owner 执行；四阶段。</li>
+<li>Owner 通信优化：两级层次；XOR 细粒度布局；前向重叠（前瞻窗口、节点内延迟广播、瞬时物化生命周期）；后向重叠（五阶段、跨层流水、节点内排开、节点间分散）。</li>
+<li>Gram NS 迭代：Gram 空间递推；批量执行（小矩阵 batch 16 快约 3 倍）；SYRK 对称；epilogue 融合；形状专属自调优与持久核缓存。</li>
+<li>负载均衡：round-robin 与 LPT 不够；实测成本模型；MILP 形式与求解；阈值回退贪心。</li>
+<li>完整训练步：算法 1 伪代码（24 行）；语义（owner 收到与同步参考相同的平均满矩阵梯度；发布异步、下一层前 hook 才等待）。</li>
+<li>实现：三调用；TP 嵌套 owner；零尺寸占位符；_owned_data 全精度；tied 参数全别名替换；三种分区策略；Polar Express 默认；fp16 NS。</li>
+<li>评估：四组负载、A800 集群、bf16；表 1（24 行）；平均 +2%；剩余开销是最大 owner 侧矩阵的 NS 时间；图 8 扩展趋势。</li>
+<li>分量拆解与局限：表 2（48%/32%/16%）；单卡局限。</li>
+<li>相关工作：矩阵优化器（Shampoo/SOAP/Muon/NorMuon/Newton-Muon/Dion）；分布式实现（Moonlight、Kimi-K2、分布式 Shampoo、Canzona 1.57×）；分片基础；Gram NS 与 Polar Express；核合成（TVM、Ansor、Triton、TileLang）。</li>
+<li>结论：三项组合消除冗余、重叠剩余工作；开源 github.com/X-Square-Robot/dmuon。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>单卡训练收益弱：优化器步时间仍降约 2 倍，但用不上分布式执行的好处。</li>
+<li>只去掉系统开销，不改算法：数学上等价的重构，完整继承 Muon 的收敛性。</li>
+<li>剩余开销不可约：负载均衡后留下的关键路径成本是最大的 owner 侧矩阵更新的 NS 时间，不改变优化器本身消不掉。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>owner 式执行去冗余：矩阵级计算只由一个 owner 做一次，其余 rank 只在需要时物化；梯度路由到 owner、更新异步发布。</li>
+<li>两级通信层次：节点间先行、节点内延迟；XOR 布局把并发集合分散到不同通信组。</li>
+<li>前后向流水线：前向用前瞻窗口，后向用五阶段跨层重叠；节点内广播与约简排开、节点间分散。</li>
+<li>Gram 空间 + 对称性：迭代留在 m×m Gram 空间；SYRK 只算下三角、epilogue 重建上三角。</li>
+<li>批量与自调优：小矩阵按形状批量推进；核调度按形状搜索、持久缓存键控。</li>
+<li>负载均衡用实测成本：解析模型刻画不了批量与自调优的影响，实测 c_{s,b} + MILP 最小化 makespan。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
