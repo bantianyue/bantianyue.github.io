@@ -136,7 +136,7 @@ body.mode-en figcaption .cap-en{border-top:0;padding-top:0}
 
 .tbl-wrap{margin:28px 0;overflow-x:auto;max-width:100%;min-width:0;-webkit-overflow-scrolling:touch}
 /* 独立公式：论文里的 display equation，MathML 原样渲染 */
-.eq{margin:26px 0;padding:6px 0;overflow-x:auto;display:flex;justify-content:safe center}
+.eq{margin:26px 0;padding:6px 0;overflow-x:auto;display:flex;justify-content:flex-start}.eq>.katex-display{margin-left:auto;margin-right:auto}.eq>.eqno{flex:none}
 .eq math{display:block}
 /* 算法块的标题（Algorithm 1: …）：代码块本身不译，标题要留着 */
 .code-cap{margin:26px 0 8px;font-size:13.5px;line-height:1.6;color:var(--ink-2);font-weight:600}
