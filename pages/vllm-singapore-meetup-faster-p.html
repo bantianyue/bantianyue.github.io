@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>vLLM 新加坡线下会：更快 Prefill、Agent 写的算子与通往 Vera Rubin 之路 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>vLLM 新加坡线下会：更快 Prefill、Agent 写的算子与通往 Vera Rubin 之路</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://pytorch.org/blog/vllm-singapore-meetup-faster-prefill-agent-written-kernels-and-the-road-to-vera-rubin/">https://pytorch.org/blog/vllm-singapore-meetup-faster-prefill-agent-written-kernels-and-the-road-to-vera-rubin/</a></div>
+<h1>vLLM 新加坡线下会：更快 Prefill、Agent 写的算子与通往 Vera Rubin 之路（4⭐，No.131）</h1>
+<ul>
+<li>原文：vLLM Singapore Meetup: Faster Prefill, Agent-Written Kernels and the Road to Vera Rubin，PyTorch 博客</li>
+<li>原文链接：https://pytorch.org/blog/vllm-singapore-meetup-faster-prefill-agent-written-kernels-and-the-road-to-vera-rubin/</li>
+<li>收藏日期：2026-11-26</li>
+<li>星级：4⭐</li>
+<li>主题：并行策略（推理）、Kernel 优化、训练确定性</li>
+</ul>
+<h2>一句话要点</h2>
+<p>2026 年 11 月 13 日新加坡 vLLM 线下会的六场分享：流水线并行（PP2）在 2×GB300 上最高吞吐达 TEP2+SP 的 1.37 倍；AI Agent 循环写算子、调算子让 SM12x 从 0/17 个专用算子涨到 14/17；零误差算子让异步 RL 不再需要裁剪与丢样本；Vera Rubin 发版日即有 vLLM 支持，诀窍是把内存与计算放在同一个局部域。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>六场分享覆盖了推理优化的三条主线——并行布局、算子效率、新硬件适配——而且每一场都有可复现的数字：PP2 的 1.37 倍、SM12x 的 939 毫秒 32K Prefill、Vera Rubin 的 8–29% 解码算子提速，不是只讲方向的综述。</li>
+<li>它把“Agent 写算子”从口号落成了两条可验证的链路：SM12x 上 Agent 帮写 FlashInfer 专用算子，每月相关拉取请求从 6 个涨到 121 个；RL 训练里 Agent 循环把精确算子的代价压到 rollout 速度的约 10%，同时保持逐比特一致。</li>
+<li>Vera Rubin 一节是目前最具体的 Rubin 推理部署指南：两个 die 是两个局部域，默认约一半内存流量跨 L2 互联，解码时把 MoE 专家本地化收益最大，TMA 加载从 13.4 TB/s 升到 18.7 TB/s，对照 19.2 TB/s 的 HBM 峰值。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>Prefill 的并行布局之争有定量答案：在 2×GB300 上跑 MiniMax-M3.1-Flash，PP2 的最高吞吐达到 TEP2+SP 的 1.37 倍，因为 PP 去掉了大部分与计算争抢的集合通信；步长固定时 TTFT 目标收紧到 0.75 秒仍是 TEP2+SP 占优，目标放宽后 PP2 占优；新的 PP 感知调度器按队列规模定微批次大小，无需调参就能匹配手工调好的最优步长，从约 0.5 秒起 PP2 全面领先。</li>
+<li>让 PP 落地的三处修复都可复用：按实测时间而非层数平衡各阶段、限制步长以缩小流水线填充与排空、把激活传输移到拷贝引擎上；接近饱和时 p50 首 token 延迟降低 13–20%，现已成为 NVLink 上的默认设置。</li>
+<li>SM12x（RTX PRO 与 DGX Spark）在六个月里从 vLLM 里没有 DeepSeek-V4 通路走到接近峰值效率：有专用 SM12x 算子的 FlashInfer 功能类别从 1 月的 17 个里 0 个涨到 10 月的 14 个；算子只有被框架选中才有用，一行分发修复带来 17.7% 的吞吐提升，NVFP4 线性层优先用 W4A4 带来 23.8% 的提升。</li>
+<li>这些卡只有 PCIe Gen5、没有 NVLink，并行方式决定通信代价：TP2×PP2 代替 TP4，Prefill 吞吐达到 1.37 倍；通信感知的权重卸载让 DeepSeek-V4-Pro 得以在 8 张 RTX PRO 6000 上启动；8 张 RTX PRO 5000 上 32K token 的 Prefill 只需 939 毫秒，MoE 解码读权重达到实测 DRAM 峰值的 98–99%，视频生成从 213.4 秒降到 4.92 秒（5.17 秒片段），实时因子 0.95。</li>
+<li>RL 训练的失配根源是浮点加法不满足结合律：vLLM rollout 算子与训练器算子对同一求和的切分方式不同，就会逐渐偏离；在 DeepSeek V4 上，标准算子的 KL 失配不断上升，训练在约 100 步 RL 内崩溃，而精确算子把 KL 保持在 0。</li>
+<li>用精确算子后，异步 RL 不再需要裁剪、门控或丢样本：REINFORCE Zero 只需给每个 token 重新加权，准确率 48.80%，对照同步 RL 的 48.91%，每次更新时间从 49.4 秒降到 20.6 秒，加速 2.40 倍。</li>
+<li>Rubin 像一颗 NUMA GPU：两个 die 各是一个局部域，各有自己的 SM、L2 与 HBM4 堆叠，默认情况下一个算子约一半的内存流量要跨过 L2 互联；规则是把内存与计算放在一起，并查询局部域的数量而不是假定它；在 InferenceX 上，Vera Rubin NVL72 上的 MiniMax M3.1-Flash 在同等交互性下每美元 token 数达到 GB300 的约 4.3–6.5 倍。</li>
+</ul>
+<h2>活动概览</h2>
+<ul>
+<li>2026 年 11 月 13 日，vLLM 社区在新加坡 SGInnovate 聚集，参加由 Inferact 与 NVIDIA 主办的半天技术线下会；vLLM 诞生于加州大学伯克利分校，现由 PyTorch 基金会托管，支持数百种模型架构，覆盖各类加速器。</li>
+<li>全天两条主题：从通信受限的布局里榨取吞吐，以及用 AI Agent 写算子、调算子。</li>
+</ul>
+<h2>流水线并行：高吞吐 Prefill 的新布局</h2>
+<ul>
+<li>Agent 流量里，一轮对话大约有 10 万输入 token（约 95% 已缓存），5K 新 token 要在 3 秒内出首 token，留给每个新 token 的预算比解码严苛约 33 倍——Prefill 的延迟预算远比解码紧。</li>
+<li>PP2 在 2×GB300 上跑 MiniMax-M3.1-Flash，最高吞吐达到 TEP2+SP 的 1.37 倍；让 PP 落地的修复是按实测时间而非层数平衡各阶段、限制步长、把激活传输移到拷贝引擎上，接近饱和时 p50 首 token 延迟降低 13–20%。</li>
+<li>PP 感知调度器按队列规模定每个微批次大小，无需调参就能匹配手工调好的最优步长，从约 0.5 秒起 PP2 全面领先。</li>
+</ul>
+<h2>SM12x：从能用到高效</h2>
+<ul>
+<li>有专用 SM12x 算子的 FlashInfer 功能类别从 1 月的 17 个里 0 个涨到 10 月的 14 个，每月 SM12x 拉取请求从 6 个涨到 121 个，AI 编程 Agent 帮了大忙。</li>
+<li>一行分发修复带来 17.7% 的吞吐提升，NVFP4 线性层优先用 W4A4 带来 23.8% 的提升；TP2×PP2 代替 TP4，Prefill 吞吐达到 1.37 倍。</li>
+<li>亮点数据：8 张 RTX PRO 5000 上 32K token 的 Prefill 只需 939 毫秒；MoE 解码读权重达到实测 DRAM 峰值的 98–99%；视频生成从 213.4 秒降到 4.92 秒，实时因子 0.95。</li>
+</ul>
+<h2>世界模型实时化：vLLM-Omni</h2>
+<ul>
+<li>vLLM-Omni 把 vLLM 从纯文本模型扩展到全模态模型，支持 100 多种架构；现在它在 4 张 H200 上实时服务交互式视频世界模型 LingBot-World 2.0，单会话实时运行。</li>
+<li>关键是新的 AR-Diffusion 引擎，复用 vLLM 的分页 KV 缓存管理器，按视频块逐块生成；经验法则是 KV 的生命周期：如果 K/V 只活一个请求，模型跑在 DiffusionEngine 上；如果活整个交互会话，就跑在新引擎上。</li>
+<li>Ulysses 序列并行把 H200 上一个 block 的时间从 2397 毫秒降到 725 毫秒；每 12 帧一块，最新主干比 9 月快 1.9 倍且质量无损，全部可选优化都打开则快 2.75 倍（22.5 fps），远高于 12 fps 的实时线。</li>
+<li>Noisy PP 让后面的块可以基于前面块进行中的 KV 提前启动，在 CausVid-Wan 1.3B 上把稳态吞吐提升 2.85 倍；同时发布了基于 vLLM-Omni 的开源视频 Agent OpenDirector。</li>
+</ul>
+<h2>更快完成 RL 训练：零误差算子与简单异步 RL</h2>
+<ul>
+<li>浮点加法不满足结合律，vLLM rollout 算子与训练器算子对同一求和的切分方式不同，就会逐渐偏离；DeepSeek V4 上标准算子的 KL 失配不断上升，训练在约 100 步 RL 内崩溃，精确算子把 KL 保持在 0。</li>
+<li>Agent 循环把精确算子的代价降到 rollout 速度的约 10%：先让每一层逐比特匹配，再换入更快算子并复查差异仍为零；这套技能已开源，在 Nemotron、DeepSeek V4.1 与 Kimi K3.1 上都奏效，模型发布当天零误差即就绪。</li>
+<li>REINFORCE Zero 只需给每个 token 重新加权，准确率 48.80%，对照同步 RL 的 48.91%，每次更新时间从 49.4 秒降到 20.6 秒，加速 2.40 倍。</li>
+</ul>
+<h2>Vera Rubin 上的 vLLM：架构、局部域与算子</h2>
+<ul>
+<li>vLLM 在 Vera Rubin 发版日当天就能跑，因为 Blackwell 算子无需改动即可运行；但要达到峰值性能需要 Rubin 专用算子，比如 double-K MMA。</li>
+<li>Rubin 像一颗 NUMA GPU：两个 die 各是一个局部域，各有自己的 SM、L2 与 HBM4 堆叠，默认情况下一个算子约一半的内存流量要跨过 L2 互联；规则是把内存与计算放在一起，并查询局部域的数量而不是假定它。</li>
+<li>解码时把 MoE 专家本地化收益最大，内存密集型解码算子提速 8–29%，TMA 加载从 13.4 TB/s 升到 18.7 TB/s，对照 19.2 TB/s 的 HBM 峰值。</li>
+<li>在 InferenceX 上，Vera Rubin NVL72 上的 MiniMax M3.1-Flash 在同等交互性下每美元 token 数达到 GB300 的约 4.3–6.5 倍。</li>
+</ul>
+<h2>企业级 Agent 基础设施</h2>
+<ul>
+<li>随着企业软件从「人调用工具」转向「Agent 自主执行」，风险与成本正从模型层下移到执行层；Agent 需要并发运行、修改系统状态、持有真实凭证，每一次执行都是一次安全边界事件。</li>
+<li>MicroVM 提供硬件级隔离，最小权限策略约束网络出口与凭证，完整审计轨迹让每次执行都可重放，快照与休眠让百万级并发在经济上可行。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>这是一篇线下会综述，六场分享每场只有要点与数字，没有论文级的推导与复现细节；PP2 的 1.37 倍、Vera Rubin 的 4.3–6.5 倍每美元 token 数等数字来自演讲者口径，硬件配置与测试条件未在文中完整展开。</li>
+<li>部分数字是单点测量（如 8 张 RTX PRO 5000 上 32K Prefill 939 毫秒），不同批量与上下文长度下的表现需要看各团队后续的完整报告。</li>
+<li>演讲现场照片是讲稿截图与合影，没有架构图的矢量原文件，细节（如 MegaMoE 并行布局图、Omni 模态架构图）只能按照片分辨率阅读。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>按实测时间而非层数平衡流水线阶段：做 PP 调度时先实测各阶段耗时再分层，而不是按层数均分。</li>
+<li>算子只有被框架选中才有用：写了专用算子后，先查分发逻辑是否真的走到它，一行分发修复在本篇里值 17.7% 吞吐。</li>
+<li>训练推理一致性的低成本解法：Agent 循环先逐比特对齐每一层，再换入更快算子并复查差异仍为零，精确算子的代价可以压到 rollout 速度的约 10%。</li>
+<li>新硬件适配的通用规则：把内存与计算放在一起，并查询局部域的数量而不是假定它；NUMA 式 GPU 上默认约一半内存流量会跨互联，解码时把 MoE 专家本地化收益最大。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
