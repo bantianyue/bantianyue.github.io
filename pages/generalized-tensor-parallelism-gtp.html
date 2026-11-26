@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NVIDIA GTP：广义张量并行：以 10+ EFLOP/s 支撑万亿参数 LLM 训练 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>NVIDIA GTP：广义张量并行：以 10+ EFLOP/s 支撑万亿参数 LLM 训练</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/html/2611.32057v1">https://arxiv.org/html/2611.32057v1</a></div>
+<h1>NVIDIA GTP：广义张量并行：以 10+ EFLOP/s 支撑万亿参数 LLM 训练（4⭐，No.136）</h1>
+<ul>
+<li>原文：Generalized Tensor Parallelism: Powering Trillion-Parameter LLM Training at 10+ EFLOP/s，arXiv 2611.32057v1</li>
+<li>原文链接：https://arxiv.org/html/2611.32057v1</li>
+<li>收藏日期：2026-11-26</li>
+<li>星级：4⭐</li>
+<li>主题：并行策略、训练框架、训练核心流程</li>
+</ul>
+<h2>一句话要点</h2>
+<p>数据、张量、序列、上下文并行与 FSDP 都是广义张量并行（GTP）这一个框架的特例：每层的参数与激活各自切分，任何一侧都能在用前以全收集再物化。把参数全收集从每个 Transformer 块前改成每个 GEMM 前，2T 参数 MoE 在 12,288 张 GB300 上跑到 13.0 EFLOP/s，弱扩展效率 98%，1M token 序列能在 512 卡上跑。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>它把五种并行方式收进一个框架：DP、TP、SP、CP、FSDP 不再是五套各自调参的方案，而是参数与激活两个切分轴、再加两侧是否再物化的组合。选配置变成在通信模型里算最优切分点，而不是凭经验试。</li>
+<li>核心改动只有一个、但位置关键：参数全收集从“每个 Transformer 块前”挪到“每个 GEMM 前”。块级钩子让一个块的第一个 GEMM 等齐整个块的全部参数；按 GEMM 调度后，每个 GEMM 只等自己的权重，GFC1 不再被 GFC2 的权重拖住。</li>
+<li>万卡数字是实测不是外推：2T 参数 MoE 在 12,288 张 GB300 上 13.0 EFLOP/s、弱扩展效率 98.2%；256–1,024 卡上比 MFSDP 快 1.05–1.55 倍，比调优过的 3D 并行快 1.27–1.31 倍。实现已开源进 Megatron-Core。</li>
+<li>细节覆盖实现全链路：权重组放置、低精度存储的对齐填充、对称用户缓冲区、全迭代 CUDA 图、切分权重上的 AdamW 与 Muon（三路 NS 选法），每个选择都有消融或对比数字。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>统一框架：参数沿隐藏维切分（t 路）、激活沿 token 维切分（c 路），一层分布在 n=t·c 张卡上；GTP 度 p=t×r，r 为再物化度。r=1 时退化为 TP 加 DP；t=1 时退化为 FSDP 或 HSDP。MoE 里专家权重用独立的 EGTP 度 rₑ。</li>
+<li>通信取舍有公式：参数项约 4γ_W·hh′/t，激活项约 4γ_X·sht；γ_W=1.5、γ_X=1.25 时最优 TP 度 t<em>=√(1.2·(h′/s)·(B_t/B_c))。每卡 token 多时 t</em> 趋向 1（FSDP）；token 少时 NVLink 域内更大的 t 更划算。</li>
+<li>逐 GEMM 调度三招：预取链（C1，稠密短前瞻、专家长前瞻）、消费者专属等待（C2，每个 GEMM 只等自己的权重）、合并专家收集（C3，同一分组 GEMM 的本地专家权重一次集合通信）。单独去掉 C1、C2、C3，DSV4-Pro 吞吐降 12.2%、15.7%、8.3%，Internal-2T 降 4.4%、2.7%、3.4%。</li>
+<li>万卡扩展：Internal-2T 在 12,288 卡上 13.0 模型 EFLOP/s（1,060 TFLOP/s/GPU），4,096→12,288 卡弱扩展效率 98.2%；固定 GBS 12,288 时卡数减半到 6,144，每卡吞吐反升 9%。</li>
+<li>对 MFSDP：256 卡上 GTP 在全 DSV3、DSV4-Pro 代理、Internal-2T 代理上分别快 1.05、1.25、1.21 倍；1,024 卡上快 1.55 与 1.38 倍（后两者）。DSV4-Pro 上 GTP 反向全收集暴露比例 20%，MFSDP 为 80%。</li>
+<li>对 FSDP2：DSV3 代理、256 卡，GTP 8,862 vs 8,503 tokens/s/GPU（1.04 倍），显存 183GB vs 219GB（低 16%）。</li>
+<li>对 3D 并行：DSV4-Pro 代理、256–1,024 卡，GTP 快 1.27–1.31 倍，但多用 29–48% 显存；GBS 从 1K 增到 8K，优势从 26% 收窄到 16%。3D 并行的瓶颈是阶段不均衡（最慢阶段比均值高 20%，阶段 0 的步时间里 29% 是 PP 传输与对端等待）。</li>
+<li>长上下文：完整 Internal-2T 在 512 卡、每步 4M token 下，序列 8K→1M 时吞吐从 1,258 降到 883 TFLOP/s/GPU（降 30%），步时间 5.1→35.8 秒，每卡 283GB。Softmax 注意力时长从 64K 到 1M 增长 15.3 倍，占 GPU 活动从 3% 涨到 64%。</li>
+<li>Muon：混合 Muon（稠密按成本模型选重复或分布式 NS、专家用层分片 NS）比重复 NS 快 1.55 倍（256 卡）、1.34 倍（512 卡）、1.15 倍（1,024 卡）。</li>
+<li>对称用户缓冲区：Internal-2T 代理上 UB AG+RS 相对关闭，256 卡吞吐提升 4.4%、显存降低 21%，512 卡提升约 5%、降低约 24%。</li>
+<li>填充取舍：MXFP8 与 GTP64 下，注意力输出与共享专家 FC2 产生 14.3% 填充；切分 DSV3 的 Q 下投影会产生 33.3%，DSV4-Pro 的 KV 投影会产生 300%，所以这两处保持复制。路由 FC1/FC2 在 EGTP2/4/8 下零填充。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>引言：万亿参数预训练吃显存又吃算力；DP 复制参数、TP 激活通信难隐藏、PP 有气泡、FSDP 每微批次全收集全部参数；GTP 把五种并行统一成一个框架。</li>
+<li>广义张量并行：线性层 GEMM 的两个输入 X 与 W 各自切分；TP 切参数、DP/CP 切激活；再物化把复制扩展到全部 n 卡；权重组 r 与 GTP 度 p=t×r；MoE 用 EGTP；通信模型与最优 TP 度公式；显存随卡数成比例缩小。</li>
+<li>逐 GEMM 调度：消费者接口（GEMM 读权重视图，wgrad 只读 X 与 dY）；三个调度问题（何时发、等什么、合并）；块级钩子的问题；C1/C2/C3 三条策略。</li>
+<li>实现：MCore 与 TE 分工、消费者接口 DistributedWeight；权重组、序列切分（q×m 放置）、跨域专家切分；低精度存储（MXFP8/NVFP4）、对齐填充公式、对称用户缓冲区；预取链注册与初始化；全迭代 CUDA 图；AdamW 与 Muon（三路 NS）；检查点。</li>
+<li>实验评估：设置（GB300、PyTorch 2.13、TE 2.19）；NT3-Nano 损失曲线（0.0022 nats 差）；万卡扩展（13.0 EFLOP/s、98.2%）；对 MFSDP/FSDP2/3D 并行的对比；长上下文（1M token）；调度消融；Muon；对称用户缓冲区；填充取舍。</li>
+<li>配置经验：隐藏全收集（每专家 token 数定重叠预算、调度限制重叠、显存限制 s）；选并行度与放置（TP 度、再物化度、CP 度、EP/CP 放置）；与流水线并行的取舍（显存、吞吐、何时加 PP）。</li>
+<li>相关工作：统一切分抽象（GSPMD、Mesh-TensorFlow、Alpa）；FSDP 实现（ZeRO-3、FSDP2、MFSDP、veScale-FSDP、FlexShard、MiCS、ZeRO++、HSDP）；3D 并行；重叠 TP 通信；并行化 MoE 层。</li>
+<li>结论：五种并行是 GTP 的特例；按 GEMM 调度全收集；2T MoE 在 12,288 张 GB300 上 13.0 EFLOP/s。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
