@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speculative Encoding:一个翻译器覆盖7个模型42个方向,跨模型KV缓存免预填充 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Speculative Encoding:一个翻译器覆盖7个模型42个方向,跨模型KV缓存免预填充</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://x.com/RampLabs/status/2125625946229064118">https://x.com/RampLabs/status/2125625946229064118</a></div>
+<h1>Speculative Encoding:一个翻译器覆盖7个模型42个方向,跨模型KV缓存免预填充（4⭐，No.132）</h1>
+<ul>
+<li>原文：Speculative Encoding: Many-to-Many Cache Translation，X Article</li>
+<li>原文链接：https://x.com/RampLabs/status/2125625946229064118</li>
+<li>收藏日期：2026-11-26</li>
+<li>星级：4⭐</li>
+<li>主题：KV 缓存跨模型翻译、推测编码、推理优化、并行策略（推理）</li>
+</ul>
+<h2>一句话要点</h2>
+<p>一个 2.35B 参数的共享编码器-解码器翻译器把源模型的隐状态直接译成目标模型的隐状态，覆盖 7 个模型、4 个家族之间的全部 42 个方向：8k token 文档上翻译缓存保留目标模型原生准确率的 96.9%，32k 文档上目标模型开始作答比重新预填充快 4 倍；再加一个问题条件压缩器，128k token、64 倍压缩下保留率反而比完整翻译缓存高 4.3 个点。</p>
+<h2>为什么值得读</h2>
+<p>多模型协作（路由器、多智能体群）里模型之间传上下文的标准做法是传文本、接收方重算预填充，成本随长度平方增长。这篇给出了一条绕过文本往返的路：翻译隐状态而不是 KV 缓存，目标模型用自身冻结权重算出缓存；更关键的是只用一个网络覆盖全部 42 个方向，而不是每对模型训练一个翻译器，参数随模型数增长、不随模型对数增长。数字也扎实：7 个模型、12 项任务、3 个随机种子，训练外任务保留率与训练内任务相当（97.4% 对 96.5%）。</p>
+<h2>核心结论</h2>
+<ul>
+<li>翻译器结构：所有模型共用的 Transformer 编码器-解码器，投影（Pⁱⁿ/Pᵒᵘᵗ）与模型-层偏置（eˢʳᶜ/eᵗᵍᵗ）按模型-层适配；前馈做成混合专家（常开 MLP + 8 路由专家取 top-2），专家按模型-层分组；注意力读全部源层、跨 token 只看最近 8 个 token，成本随文档长度线性增长。</li>
+<li>训练分两阶段：第一阶段缓存拟合（MSE，对原生缓存，逐头按原生键值 RMS 归一化）；第二阶段蒸馏（KL 散度，对齐目标模型原生展开）；多目标梯度用 GradNorm 式重缩放到平均范数再平均、裁剪到范数 1。</li>
+<li>结果：8k 文档平均保留率 96.9%，最差方向 93.1%，相对较弱模型 100.3%；128k 文档全深度 2.5 倍、L′=8 时 6.1 倍、L′=4 时 7.5 倍，保留率只降 1～2 个点；全深度保留率从 32k 的 92% 降到 128k 的 83%。</li>
+<li>压缩器：问题条件压缩器从 SnapKV 选择出发（保留问题最关注的 B = |D|/r 个位置）、蒸馏合成；32k 与 64k 时 128 倍压缩也只差不到 2 个点；128k 时每个压缩比都超过完整缓存，64× 时最多高 4.3 个点。</li>
+</ul>
+<h2>分节</h2>
+<ul>
+<li>问题：模型间传上下文，先要重算预填充（引言：预填充平方成本、Latent Briefing 仍需预填充、成对翻译器要 n(n−1) 个）</li>
+<li>相关工作（缓存到缓存翻译、压缩、跨模型可移植性；取四条思路：隐状态建 KV、目标 token 嵌入启动解码器、KL 蒸馏、共享核心加薄对齐层）</li>
+<li>架构（设置、3 条要求、编码器-解码器设计、投影与偏置、混合专家、注意力、逐文档翻译流程，式 1–6）</li>
+<li>训练（第一阶段缓存拟合式 7、第二阶段蒸馏式 8；稳定性：梯度重缩放式 9）</li>
+<li>结果（7 模型 4 家族、保留率定义；跨模型家族图 4–5；长文档图 6）</li>
+<li>压缩（初始化 SnapKV 式 10、压缩器架构式 11–13、压缩器训练式 14、压缩器结果图 9）</li>
+<li>结论（路由器中途换模型、多智能体群按问题取上下文）</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>保留率随文档变长而下降（全深度 32k 的 92% 降到 128k 的 83%），作者称希望后续工作解决。</li>
+<li>压缩器只压缩全注意力层，滑窗层与线性注意力层保留翻译缓存。</li>
+<li>评估集中在 7 个 8B～14B 模型、4 个家族，未覆盖更大模型与更多家族；加速比在单台 H200 + vLLM 上测得。</li>
+<li>附录（混合专家配置、token 对齐细节、翻译器配置表、训练数据与评估细节）与参考文献按规则未纳入正文。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>跨模型翻译译隐状态、不译 KV 缓存：目标模型用自身冻结权重算 KV，把键值约束在目标模型理解的空间里，且每层每 token 只有一个隐状态、形态统一。</li>
+<li>共享核心 + 模型-层投影/偏置的适配范式：一个网络服务全部模型对，新增模型只需加投影与偏置，不用为每对重训。</li>
+<li>注意力读全部源层、跨 token 只看最近窗口：源隐状态已编码前文，窗口注意力把翻译成本从平方降到线性。</li>
+<li>两阶段训练配方：先 MSE 拟合缓存给直接信号，再 KL 蒸馏对齐输出分布；多目标梯度先重缩放到平均范数再平均，避免大梯度目标主导。</li>
+<li>压缩范式：先用无需训练的 SnapKV 选位置，再蒸馏合成，压缩器从翻译器最后几个解码器块出发、输出映射置零，训练起点就是 SnapKV 选择本身。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
