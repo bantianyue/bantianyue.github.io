@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CoT-Proxy：思维链留空、只学动作，4B 模型 AppWorld 成功率 7%→48% · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>CoT-Proxy：思维链留空、只学动作，4B 模型 AppWorld 成功率 7%→48%</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/html/2611.33148v1">https://arxiv.org/html/2611.33148v1</a></div>
+<h1>CoT-Proxy：思维链留空、只学动作，4B 模型 AppWorld 成功率 7%→48%（4⭐，No.134）</h1>
+<ul>
+<li>原文：CoT-Proxy: Cross-Format Transfer for Distilling Long-Horizon Policies，arXiv 2611.33148v1</li>
+<li>原文链接：https://arxiv.org/html/2611.33148v1</li>
+<li>收藏日期：2026-11-26</li>
+<li>星级：4⭐</li>
+<li>主题：训练核心流程、推理可观测</li>
+</ul>
+<h2>一句话要点</h2>
+<p>教师思维链被藏在 API 后面时也能蒸馏长程策略：训练目标里推理块留空、只监督动作，配 15% 回放 KL 正则把学生拉回初始模型，策略在推理时由学生自己的思维执行；再在空推理块后加一段教师推理的短摘要（CoT-proxy），Qwen3-4B 在 AppWorld 上从 7.3% 提到 48.2%（教师 GPT-5.6 Luna）。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>它回答了一个实际卡点：最强教师是闭源模型，思维链被加密、只给摘要，标准蒸馏（照抄思维链加动作）根本拿不到训练信号。这篇工作把“思维链”整个从训练目标里删掉，证明只学动作就能迁移策略。</li>
+<li>机制干净且可复现：三个训练目标（全思维链、只学动作、CoT-proxy）只差推理块里放什么；回放正则、摘要位置、摘要来源、可见文字四个消融逐一测清，每处都有明确的“不能动”结论。</li>
+<li>数字跨两个环境、两位教师、两个学生规模一致：开教师 Qwen3.6-27B 与闭教师 GPT-5.6 Luna，4B 与 32B 学生，AppWorld 与 SWE-bench Verified。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>只学动作就能迁移策略：Qwen3-4B 在 AppWorld 上从 7.3% 提到 17.9%，Qwen3-32B 从 11.5% 提到 25.4%；SWE-bench Verified 上 4B 从 2.7% 提到 5.5%，32B 从 5.8% 提到 14.3%。推理时学生用自己的思维执行学到的策略，这种跨格式迁移以前只在安全场景里观察到过。</li>
+<li>CoT-proxy 是关键补充：空推理块后加一段教师推理短摘要（＜summary＞块，平均 26 个 token 对 124 个推理 token），4B 在 AppWorld 上从 17.9% 提到 34.5%，闭源教师下提到 48.2%；32B 提到 29.8% 与 59.1%。CoT-proxy 在表 1 成功率各列上均值都是最高的。</li>
+<li>全思维链训练并非全面占优：只在 4B AppWorld（领先 11 个点）与 32B SWE-bench（领先 7 个点）上领先只学动作，另外两个设置相差不到 3 个点；而且它每任务回合数最多、AppWorld 上 20%（4B）与 35%（32B）的轨迹耗尽 token 预算。</li>
+<li>回放正则不可少：15% 回放（每更新 17 条教师轨迹加 3 条回放）把全思维链训练的 KL 漂移从 0.042 压到 0.0027 nat 每 token，AIME 从 68.9% 恢复到 74.2%；回放数据必须来自目标环境之外，域内回放把只学动作学生打回初始模型的 7.3%。</li>
+<li>摘要必须放在推理块之外：摘要放进推理块里当短思维链只到 23.4%（开教师）与 33.9%（闭教师），低于 CoT-proxy 的 34.5% 与 48.2%，也低于全思维链。</li>
+<li>标注者不必大、但必须够强：Qwen3-4B-Instruct 写的摘要效果与默认相当，成本约 1%（0.08 对 7.5 GPU 小时）；Qwen3-1.7B 丢掉大部分收益；事后解释（不看教师推理）恢复约三分之二的收益。</li>
+<li>教师可见文字必须剥掉：保留可见文字时只学动作从 17.9% 跌到 4.6%、CoT-proxy 从 34.5% 跌到 24.6%。</li>
+<li>推理时学生不写摘要：CoT-proxy 学生推理时从不输出 ＜summary＞ 标签，收益来自摘要教的策略、不是测试时产生的摘要；它把推理块中位数从 541 个 token 压到 49 个，但措辞仍保留初始学生的“好的”开头，只有全思维链训练把措辞改成教师的“用户想要”。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>引言：长程智能体依赖策略；最强教师闭源、思维链被加密以防止蒸馏；小模型从强推理者轨迹里学得不好；跨格式迁移的思路来自安全领域的观察（思维链关掉时微调的失调在重开后仍然存在）。</li>
+<li>方法：三种训练目标（全思维链、只学动作、CoT-proxy）与推理格式；轨迹里每回合都按同一表示渲染，避免历史泄露教师推理；回放池来自目标环境之外；损失 = 动作 token 交叉熵 + 回放样本 KL 惩罚，LoRA 微调 8 个 epoch。</li>
+<li>实验设置：AppWorld（168 任务、56 场景）与 SWE-bench Verified（500 任务）；学生 Qwen3-4B-Thinking-2507 与 Qwen3-32B；开教师 Qwen3.6-27B、闭教师 GPT-5.6 Luna（xhigh 推理强度）；评测预算 50 交互 / 75 步、每回合 8,192 token、上下文 65,536（32B 为 40,960）。</li>
+<li>结果：表 1（开教师）与表 2（闭教师）主结果；只学动作迁移策略、CoT-proxy 全面领先、闭源教师同样可蒸馏。</li>
+<li>消融：表 3 回放比例与能力保留、表 4 域外/域内回放、表 5 摘要位置、表 6 摘要来源与标注者、表 7 可见文字去留。</li>
+<li>分析：CoT-proxy 学生推理时不写摘要；推理块长度分布（初始 541、教师 66、全思维链 70、CoT-proxy 49、只学动作 219，中位数 token）；措辞标记表 8。</li>
+<li>相关工作：强化学习路线、闭源教师蒸馏的替代方案（特权教师联合训练、在策略自蒸馏）、跨格式迁移的安全起源。</li>
+<li>结论：不用在教师思维链上训练即可蒸馏长程策略；CoT-proxy 是不需要推理 token 的补充信号；同一配方蒸馏闭源教师。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>闭教师 SWE-bench 设置只跑一个种子（成本原因），5 遍训练、2,970 条轨迹。</li>
+<li>CoT-proxy 相对全思维链的领先只在 Qwen3-4B 的 SWE-bench 上统计显著，其余设置在种子波动范围内。</li>
+<li>实验只覆盖 AppWorld 与 SWE-bench 两个环境、Qwen3 两个学生规模；摘要长度与质量依赖标注者，弱标注者（Qwen3-1.7B）下 12% 的回合没有摘要。</li>
+<li>附录里的配对统计比较与超参数表未收入正文精读（按规则㉑删除附录）。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>训练目标设计：推理块留空、只监督动作，配合回放 KL 正则，是“教师输出不可见推理时”的通用蒸馏配方；摘要放在推理块之外当辅助信号，而不是放进推理块里当短思维链。</li>
+<li>回放正则配方：每更新 15% 回放样本、回放池来自目标环境之外、KL 惩罚只用初始学生 logits，训练中不需要采样、不需要教师 logits。</li>
+<li>诊断方法：用推理块长度分布与开头措辞标记（“好的”“用户想要”“等一下”）判断学生的推理是否被教师同化；用“预算内结束占比”区分“走不完”与“做不对”。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
