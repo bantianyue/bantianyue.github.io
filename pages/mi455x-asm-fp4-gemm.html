@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MI455X：手写汇编 FP4 GEMM：TDM 搬运 + 簇共享 + 预洗牌，单卡 22.25 PFLOPS · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>MI455X：手写汇编 FP4 GEMM：TDM 搬运 + 簇共享 + 预洗牌，单卡 22.25 PFLOPS</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://rocm.blogs.amd.com/software-tools-optimization/mi450-asm-fp4-gemm-opt/README.html">https://rocm.blogs.amd.com/software-tools-optimization/mi450-asm-fp4-gemm-opt/README.html</a></div>
+<h1>MI455X：手写汇编 FP4 GEMM：TDM 搬运 + 簇共享 + 预洗牌，单卡 22.25 PFLOPS（4⭐，No.141）</h1>
+<ul>
+<li>原文：Feeding the Matrix Cores: Assembly FP4 GEMM Kernel Design on AMD Instinct MI455X GPUs，AMD ROCm 博客</li>
+<li>原文链接：https://rocm.blogs.amd.com/software-tools-optimization/mi450-asm-fp4-gemm-opt/README.html</li>
+<li>收藏日期：2026-11-27</li>
+<li>星级：4⭐</li>
+<li>主题：GPU kernel、低精度量化、性能优化</li>
+</ul>
+<h2>一句话要点</h2>
+<p>MI455X 的 4-bit 矩阵算力比 MI355X 涨 4 倍，HBM 带宽只涨约 3 倍，FP4 GEMM 从算力问题变成供数问题：AITER 的手写汇编内核用三招喂饱矩阵核——256×256 tile 配 4×4 簇共享、TDM 全宽搬运、权重与 scale 离线预洗牌成 256B 块；单卡实测 A4W4 22.25 PFLOPS（静态输入）、17.16 PFLOPS（随机输入）。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>它把“供数问题”算到了字节：256 WGP、每 WGP 4 个 SIMD32、峰值稠密 MXFP4 40.3 PFLOPS @ 2.4 GHz，每 WGP 每时钟约 64K 次 FP4 操作；需求表按 tile 形状逐项给（128×128→256 B/cycle、256×256→128 B/cycle、128×512→160 B/cycle），供需缺口是算出来的，不是感觉。</li>
+<li>三条准则可直接当设计清单：tile 与 cluster 一起选、TDM 装载、LDS 无冲突；每条准则都有实现细节与数字（簇最多 16 个 workgroup，4×4 最大方形；32 KiB tile 一次请求 vs 每 wave 64 条 buffer_load_b128；LDS 384 KiB SRAM 里最多 320 KiB，64 bank×4B，5 个 64 KiB 分区）。</li>
+<li>预洗牌的收益分得清：16 字节片段×16 行→连续 256B 块，scale 32 行×8B=256B 块；激活预洗牌 +16.1% 静态（395.33 µs 对 459 µs）、+6.1% 随机（512.54 对 544 µs），M=N=K=16384。</li>
+<li>实测诚实：随机输入比静态低 23–30%，并说明是功耗墙拉低主频，不是内核变慢；测试条件给了日期（2026-06-30）与单块预发布 MI455X（gfx1250）。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>硬件：MI455X 256 WGP、每 WGP 4 个 SIMD32、峰值稠密 MXFP4 40.3 PFLOPS @ 2.4 GHz、每 WGP 每时钟约 64K FP4 操作（32K 乘加）；MI355X 约 16K（10.1 PFLOPS）。</li>
+<li>三条准则：tile 与 cluster 一起选（128×128 起，4×4 簇多播共享）；TDM 装载（一个描述符代替几十条 load 指令）；LDS 访问无冲突。</li>
+<li>内核：WMMA 16×16×128（8 周期 FP8 峰值；4 周期 FP4 峰值短窗口）、32×16×128（8 周期 FP4 峰值长窗口）；预洗牌权重与 scale 成 256B 块；激活两种布局、跨 SIMD 对平衡、多级流水线（4 缓冲、提前 3 个 K 块、约 1500 周期覆盖、约 1000 周期延迟，MMA 512 周期/K 块）；序幕约 3000–4000 周期、尾声约 2000、主循环约 30000 周期（K=16384）；存储路径三选一，FP4 内核用 buffer store、输出留 VGPR。</li>
+<li>实测：A8W8 11.43/8.05、A8W4 12.43/9.27、A4W4 22.25/17.16 PFLOPS（静态/随机）；随机输入比静态低 23–30%。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>问题：供数，而非算力：算力涨 4 倍、带宽涨约 3 倍，需求表按 tile 形状给数。</li>
+<li>三条准则：tile 与 cluster 一起选；TDM 装载；LDS 访问无冲突。</li>
+<li>准则一：tile 尺寸与 cluster 共享：4×4 簇沿 N 共享 A、沿 M 共享 B。</li>
+<li>准则二：用 TDM 装载：32 KiB tile 一次请求，双 SIMD 对均摊。</li>
+<li>准则三：LDS 访问无冲突：64 bank×4B、5 个 64 KiB 分区、行填充。</li>
+<li>从准则到 FP4 GEMM 内核：选择 MMA 指令、预洗牌权重与 scale、激活两种布局、跨 SIMD 对平衡、多级流水线、序幕尾声与存储路径。</li>
+<li>实测性能：A4W4 22.25 PFLOPS，随机输入低 23–30% 是功耗墙。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
