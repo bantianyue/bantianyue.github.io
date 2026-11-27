@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DFly2：共享目标稀疏选择做投机解码，长上下文接受长度提升 31.5% · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>DFly2：共享目标稀疏选择做投机解码，长上下文接受长度提升 31.5%</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/abs/2611.34776">https://arxiv.org/abs/2611.34776</a></div>
+<h1>DFly2：共享目标稀疏选择做投机解码，长上下文接受长度提升 31.5%（4⭐，No.142）</h1>
+<ul>
+<li>原文：DFly2: Turbocharging Long-Context Speculative Decoding by Sharing the Target's Sparsity，arXiv 2611.34776，腾讯混元 AngelSpec，2026-11-26</li>
+<li>原文链接：https://arxiv.org/abs/2611.34776</li>
+<li>收藏日期：2026-11-27</li>
+<li>星级：4⭐</li>
+<li>主题：投机解码、KV 缓存、推理优化、并行策略（推理）</li>
+</ul>
+<h2>一句话要点</h2>
+<p>DFly2 把草稿层的上下文完全交给目标模型：每层草稿层读配对目标层已缓存的 KV，只读该层索引器选出的固定数量位置，不自己维护缓存、不跑打分；三个目标模型上，接受长度相对更强的基线，通用负载高 3.9%–10.5%，长上下文与智能体负载高 10.0%–31.5%；64K 时同等单用户解码速度下吞吐高 62% 与 81%。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>洞察干净：原生稀疏目标模型已经为每个查询选好了位置，用的就是它本来就要维护的缓存；草稿层的两个选择（读哪个缓存、读哪些位置）目标模型都已经做好、付过代价，草稿层直接跟随就行。</li>
+<li>一个选择在块内还管用的实测很扎实：提前一步做出的选择，覆盖后来每个 token 所选内容的近九成（158,638 个块实测），同样大小的窗口不到两成；沿块缓慢下降，最深层最后一个槽位仍约八成。</li>
+<li>自有缓存的三笔账算到了部署层面：预填充（草稿层得跑在预填充实例上）、前缀缓存命中（占每个缓存前缀内存两成以上）、解码并发（32K 时 1.73 倍）；共享 KV 后三笔账同时消失。</li>
+<li>三个架构各不相同的目标模型（DS-V4.1-Flash、GLM-5.3-Flash、Hy4 flash）同一套设计都成立，18 个格子全部领先，说明读的东西不是针对某个目标模型调出来的。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>机制：KV 共享（读配对目标层已缓存的 KV）+ Index 共享（读该层索引器选出的 top-k 位置）；三层草稿层各配一层目标层，从配对层权重起步，继承与索引器共享的查询隐向量；末层隐藏状态门控注入；块内修正逐槽位重读共享上下文。</li>
+<li>选择的有效性：提前一步的选择覆盖块内后来每个 token 所选内容的近九成，窗口同样大小不到两成；下降跟随块内深度，不跟随上下文长度。</li>
+<li>接受长度：通用负载比更强基线高 3.9%–10.5%，长上下文与智能体负载高 10.0%–31.5%；智能体平均接受长度与通用平均值差距在 4% 以内，DSpark 下降 11%–21%。</li>
+<li>速度：解码快 2%–30%，端到端每个目标模型与负载家族都领先；64K 同等单用户速度下吞吐高 62% 与 81%，相同吞吐下每用户解码快 15%–24%。</li>
+<li>代价：草稿层不占预填充实例、不影响前缀缓存命中、不占解码并发；2K 个位置只给解码步加 0.19%。</li>
+<li>消融：去掉 top-k 是最大损失；配对层改相邻层代价 4.6%；只复制注意力代价 1.6%，只复制前馈代价 1.1%；去掉块内修正的注意力读取代价 2.8%，去掉末层注入代价 1.6%。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>引言：草稿层还在为稠密目标服务；自有缓存的三笔账；目标模型的选择已经付过代价。</li>
+<li>背景：每生成一个 token 的延迟取决于接受长度；三种上下文进入方式；原生稀疏目标模型的 DSA。</li>
+<li>观察：自有缓存的三笔账；读哪些位置；一个选择在块内还管用吗；小结。</li>
+<li>方法：三层草稿层各配一层目标层；KV 共享与 Index 共享；权重初始化；末层注入；块内修正；训练目标。</li>
+<li>实验：三个目标模型、18 个格子全部领先；接受长度、服务效率、消融、分析（YOCO 并集与历史）。</li>
+<li>相关工作：没有哪篇草稿复用目标自己的选择。</li>
+<li>结论：上下文越长，跟随目标的选择越划算。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
