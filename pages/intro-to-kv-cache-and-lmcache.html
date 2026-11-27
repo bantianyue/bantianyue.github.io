@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KV缓存入门：为什么推理要把Key和Value存下来 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>KV缓存入门：为什么推理要把Key和Value存下来</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://blog.lmcache.ai/en/2026/10/01/intro-to-kv-cache-and-lmcache-part-one/">https://blog.lmcache.ai/en/2026/10/01/intro-to-kv-cache-and-lmcache-part-one/</a></div>
+<h1>KV缓存入门：为什么推理要把Key和Value存下来（4⭐，No.139）</h1>
+<ul>
+<li><strong>原文</strong>：https://blog.lmcache.ai/en/2026/10/01/intro-to-kv-cache-and-lmcache-part-one/</li>
+<li><strong>收藏日期</strong>：2026-11-28</li>
+<li><strong>主题</strong>：并行策略（推理）</li>
+<li><strong>标签</strong>：并行策略（推理）、推理可观测</li>
+<li><strong>一句话要点</strong>：KV缓存是每层每个token的Key与Value，存下来供后续token复用，解码每步只算一个新词；没有它生成成本随长度平方增长，有它则线性增长，代价是显存随token数、层数与请求数膨胀，LMCache把它搬出单个引擎进程、按存储层级分层存放、跨请求复用。</li>
+</ul>
+<h2>为什么值得读</h2>
+<p>这篇是LMCache官方的KV缓存入门（系列第一篇），从最底层把KV缓存讲透：token怎么变成向量、注意力里Query、Key、Value各自干什么、预填充与解码两个阶段的计算形态有何不同、因果掩码为什么让早期的Key和Value可以复用、缓存跨请求复用时系统提示词与对话历史为什么能跳过预填充。每个关键结论都配了可验算的数字：Llama 3 8B用BF16时每个缓存token占128 KiB，100个token约12.5 MiB，8192个token约1 GiB；没有缓存时1000个token的回复约50万次重算，是100个token回复的100倍。七个TECHNICAL DETAIL说明框把维度追踪、固定权重与请求相关张量、注意力公式、预填充到解码的形状变化、缓存大小公式、Llama 3 8B算例、平方增长推导逐项展开，是理解一切KV缓存优化（前缀缓存、PD分离、卸载、分层存储）的前置知识。读完这篇再看Valkey、Ascend多进程、Coordinator、XPU IO等LMCache后续篇，机制底座就齐了。</p>
+<h2>核心结论</h2>
+<ul>
+<li><strong>KV缓存就是每层每个token的Key与Value</strong>：Query是当下做查表的工具，用完即丢；Key与Value是后续token一直要读的状态，横跨全部缓存token位置与Transformer层。</li>
+<li><strong>预填充并行算、解码逐个算</strong>：预填充一次矩阵乘法算出全部提示词token的Q、K、V并建好初始缓存；解码每步只算一个新token的Q、K、V，读全部缓存、追加一个新Key与Value，earlier内容绝不重做。</li>
+<li><strong>因果掩码是复用的前提</strong>：token只能看到自己与earlier位置，续上新token不会改变已算好的Key与Value；这份单向性让缓存从“生成内的复用”扩展到“跨请求的复用”。</li>
+<li><strong>跨请求复用的条件是前缀还在、认得出、够得着</strong>：多轮对话、智能体多轮调用、RAG复用相同检索文档、多个请求共享同一前缀，都是把重复预填充变成缓存查找加传输的机会；缓存被丢弃、逐出或留在另一台引擎上，就得重新算。</li>
+<li><strong>没有缓存，成本随长度平方增长</strong>：第t步重做t-1个token的工作，总和约T²/2；有缓存，每步恰好一次新Key/Value计算，总成本随T线性增长。但新Query仍要读随序列增长的上下文，解码单步成本并不恒定。</li>
+<li><strong>缓存大小公式</strong>：2 × L × T × H_KV × D_head × B；分组查询注意力用更少的Key/Value头直接减少缓存量。Llama 3 8B的投影权重无论上下文多长都固定，K/V张量随每个缓存token增长。</li>
+<li><strong>取舍在显存与重算之间</strong>：GPU显存还要放权重、激活与通信缓冲，长上下文与高并发下缓存会挤掉服务容量；引擎按块分配、回收已完成请求的块、空间不够时逐出，逐出后匹配请求重新预填充。</li>
+<li><strong>LMCache的定位</strong>：把KV缓存当作可复用的数据，流过GPU显存、CPU内存、本地存储、远程后端四层；取回不总比重新算快，取决于复用量、存放位置、传输带宽与命中率，系统问题是留什么、留在哪里、什么时候搬、怎么送到需要它的引擎手里。</li>
+</ul>
+<h2>分节</h2>
+<ol>
+<li><strong>KV缓存是什么，从哪里来</strong>——推理是数字的矩阵乘法；中间结果里反复用的那部分存下来就是KV缓存，留还是扔决定推理快慢与成本。</li>
+<li><strong>从词到向量</strong>——分词、token ID、嵌入向量；“bank”在不同语境里表示不同，注意力让token融入其他token的信息。</li>
+<li><strong>模型为什么总要回头看：注意力</strong>——预测下一个词需要之前的上下文；注意力头各自强调句法、远距离指代、格式模式等不同关系。</li>
+<li><strong>Query、Key、Value：注意力如何查表</strong>——Query是找什么，Key是提供什么，Value是被选中后交出去的内容；三个TECHNICAL DETAIL框展开维度、权重与公式。</li>
+<li><strong>两个阶段：预填充与解码</strong>——预填充并行建初始缓存，解码逐个追加；自回归循环每步只读缓存、只算一个新token。</li>
+<li><strong>为什么早期的Key和Value可以复用</strong>——因果掩码保证前缀续 token 不改变已算好的Key与Value；开会记笔记的比喻。</li>
+<li><strong>把缓存复用扩展到一次生成之外</strong>——多轮对话、智能体、RAG、共享前缀四类生产负载；Llama 3 8B缓存大小算例。</li>
+<li><strong>不缓存的代价</strong>——第t步重做t-1个token的工作，总和约T²/2；1000个token的回复约50万次重算。</li>
+<li><strong>内存取舍</strong>——缓存是模型的工作记忆，随token数、层数、KV头数、头维度、字节数与活跃序列数增长；显存里留着复用还是丢掉重算。</li>
+<li><strong>LMCache为什么存在</strong>——缓存活过GPU显存分配、活过单个请求与引擎进程；下一篇从动机走到架构。</li>
+</ol>
+<h2>局限</h2>
+<ul>
+<li>入门定位，只讲动机与机制，不涉及LMCache的具体架构、接口与部署，存储、传输、协调、服务四部分留待下一篇。</li>
+<li>成本与大小的数字是模型层面的估算（未计分配器开销与设备间分片），真实占用以引擎实现为准。</li>
+<li>“取回缓存是否比重新算快”的判断只列了影响因素，没有给出不同带宽与命中率下的量化分界。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li><strong>KV缓存大小公式与算例</strong>：2 × L × T × H_KV × D_head × B + Llama 3 8B的128 KiB/token，可直接用于估算任意模型的缓存占用与显存预算。</li>
+<li><strong>预填充与解码的形状变化</strong>：注意力分数张量从H_Q × T × T变为H_Q × 1 × T，解释了TTFT与TPOT优化的不同抓手。</li>
+<li><strong>平方增长的推导</strong>：Σ(t = 1…T)(t-1) ≈ T²/2，是向团队讲清“为什么必须缓存”时最直接的算账工具。</li>
+<li><strong>跨请求复用的四类场景清单</strong>：多轮对话、智能体、RAG、共享前缀，覆盖前缀缓存与KV卸载需求分析的常见输入。</li>
+<li><strong>系统问题的四问框架</strong>：留什么、留在哪里、什么时候搬、怎么送到需要它的引擎手里，复用为任何KV缓存系统的设计评审提纲。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
