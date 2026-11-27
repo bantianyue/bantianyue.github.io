@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aleph Alpha YASA：稀疏注意力让 Kolibri 1.1 在 1M 上下文解码快 14 倍 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Aleph Alpha YASA：稀疏注意力让 Kolibri 1.1 在 1M 上下文解码快 14 倍</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://aleph-alpha.com/en/blog/sparse-attention-in-kolibri-1-1/">https://aleph-alpha.com/en/blog/sparse-attention-in-kolibri-1-1/</a></div>
+<h1>Aleph Alpha YASA：稀疏注意力让 Kolibri 1.1 在 1M 上下文解码快 14 倍（4⭐，No.140）</h1>
+<ul>
+<li>原文：YASA: How Sparse Attention Made Kolibri 1.1 up to 14× More Efficient，Aleph Alpha 博客</li>
+<li>原文链接：https://aleph-alpha.com/en/blog/sparse-attention-in-kolibri-1-1/</li>
+<li>收藏日期：2026-11-28</li>
+<li>星级：4⭐</li>
+<li>主题：并行策略（推理）</li>
+<li>标签：并行策略（推理）、训练核心流程</li>
+</ul>
+<h2>一句话要点</h2>
+<p>Kolibri 1.1 把 10 层稠密注意力换成自研稀疏注意力 YASA：两步分层索引选出 2048 个 token 做注意力，索引器复用第一个键值头、不用单独训练，KV 缓存降到 NVFP4 精度并跨层共享；1M token 下解码吞吐达 Kolibri 1 的 14 倍，单序列 KV 缓存从 10.8GB 压到 2.8GB，基座模型低 1.5 分、后训练后反超。</p>
+<h2>为什么值得读</h2>
+<p>YASA 是一套从瓶颈出发的完整稀疏注意力设计：算力、缓存搬运、缓存大小三项瓶颈各有对应组件，且每个组件的取舍都给了实测数字。绑定索引器（省掉单独训练）与跨层 KV 共享的初始化思路是可复用的设计方法；交互示例把两步选择讲得很直观。</p>
+<h2>核心结论</h2>
+<ul>
+<li>两步分层索引：粗选 1024 个 16-token 的块（压缩键取块内 16 个键的均值），组成 16384 个 token 的池子，再精选 2048 个；加最初 8 个汇聚 token 与最近 128 个 token，共 2184 个 token 做 softmax 注意力。</li>
+<li>绑定索引器：用 4 个键值头中的头 0 做索引，分数是 12 个查询头上 ReLU(qₕ·kⱼ)的均值；索引器成本是主注意力的 1/8，无需单独训练、无 KL 辅助目标。</li>
+<li>重索引器：第 5、15、20、30 层是索引器，其余 6 层稀疏层复用上一个索引器的池子只做精选；1M 下每步选择成本从 1.29ms 降到 0.72ms。</li>
+<li>KV 缓存：精度 FP8 降到 NVFP4，再跨层共享（只有第 5、20、25、30 层产缓存），1M 序列缓存 10.8GB 压到 2.8GB；前 30 层产出全部全长缓存，后 20 层只跑最后 8193 个 token，处理完整序列的活跃参数从 34.4 亿降到 18.7 亿。</li>
+<li>性能：prefill 在 1M 下快 4.4 倍，解码吞吐在 1M 下达 14 倍；基座模型英文低 1.5 分、德文低 1.7 分，后训练后整体基准 73.2% 对 66.6% 反超。</li>
+<li>训练：持续预训练 8050 亿 token（约 Kolibri 1 中期训练的四分之一），QAT 让模型在 NVFP4 舍入下训练；最终检查点是 40 个检查点的等权线性合并。</li>
+</ul>
+<h2>分节</h2>
+<p>总览（含稀疏注意力一步步讲交互示例） / 服务性能 / 模型质量 / 注意力瓶颈 / 稀疏注意力架构（稀疏注意力层、绑定索引器、分层选择、Softmax 注意力、索引器与重索引器排布、KV 缓存大小） / 持续预训练。</p>
+<h2>局限</h2>
+<ul>
+<li>附录的 KV 共享初始化推导与完整基准表按规则未入正文；本精读为摘要式，不含附录推导细节。</li>
+<li>选择本身仍有成本：粗选步是唯一随上下文增长的部分；短提示 prefill 时选择成本可能超过节省。</li>
+<li>质量结论混杂后训练改进，不能单独归因于稀疏注意力；长上下文 512k/1M 的 RULER 结果超出 256k 训练长度，是泛化能力的度量。</li>
+<li>RULER 上 32k、64k 及 256k 至 1M 略低于 Kolibri 1。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>绑定索引器：复用主注意力头做选择，省掉独立索引器权重与 KL 训练，索引器成本减半。</li>
+<li>键压缩：粗选键用块内键均值，1M 下索引器选择时间从 784μs 降到 128μs。</li>
+<li>跨层 KV 共享初始化：键旋转对齐后平均、值按行空间投影选共享矩阵、输出矩阵吸收差异，共享前损失增量从 2.31 降到 0.62 比特/字节。</li>
+<li>Prefill Exit：全长缓存生产层集中在前 30 层，后 20 层只跑感受野内的 token。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
