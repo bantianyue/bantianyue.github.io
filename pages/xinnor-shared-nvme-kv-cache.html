@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Xinnor：共享 NVMe KV 缓存层：编码 Agent 提示复用率 96%，吞吐提速 2.83 倍 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Xinnor：共享 NVMe KV 缓存层：编码 Agent 提示复用率 96%，吞吐提速 2.83 倍</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://xinnor.io/blog/building-an-efficient-on-premises-ai-coding-infrastructure-with-shared-nvme-storage/">https://xinnor.io/blog/building-an-efficient-on-premises-ai-coding-infrastructure-with-shared-nvme-storage/</a></div>
+<h1>Xinnor：共享 NVMe KV 缓存层：编码 Agent 提示复用率 96%，吞吐提速 2.83 倍（4⭐，No.138）</h1>
+<ul>
+<li>原文：Building an Efficient On-Premises AI Coding Infrastructure with Shared NVMe Storage，Xinnor 博客</li>
+<li>原文链接：https://xinnor.io/blog/building-an-efficient-on-premises-ai-coding-infrastructure-with-shared-nvme-storage/</li>
+<li>收藏日期：2026-11-27</li>
+<li>星级：4⭐</li>
+<li>主题：KV 缓存、推理优化、并行策略（推理）</li>
+</ul>
+<h2>一句话要点</h2>
+<p>8×B200 上跑 Qwen3-Coder 与 Qwen3.8 编码智能体，共享 NVMe 层做跨会话 KV 缓存：512 会话×16 轮=8192 请求，Qwen3.8 提示复用率第 16 轮达到 96.0%，吞吐 0.388→1.104 请求/秒（2.83 倍），TTFT 中位数 2.73→0.75 秒；SSD 卸载把总回放墙钟时间缩短 38%（Coder）与 65%（Qwen3.8）。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>它把“KV 缓存放 SSD 上”从想法落成可复现的实测：Mooncake + 共享 NVMe 卸载方案、8×B200、512 会话×16 轮回放，数字按模型分开给，不是只报一个平均值。</li>
+<li>反直觉的结论很具体：加 1TiB 可复用 host RAM 缓存、不用 SSD 卸载，这次实验里几乎没有改善；瓶颈不在 host 缓存，在 SSD 层能不能复用上。SSD 专属 GDS 路径与 RAM 辅助 SSD 卸载实测性能相近，同时省掉那 1TiB 可复用 host RAM 缓存。</li>
+<li>写放大一直接近 1.02，说明这层 NVMe 写入对 SSD 友好，不是拿寿命换速度；SSD 读总量 Coder 78.32/83.99 TiB、Qwen3.8 28.39/36.06 TiB，读放大可算。</li>
+<li>编码 Agent 的多轮会话是 KV 复用最自然的场景：同一仓库、同一会话的历史 prompt 在轮次间高度重叠，复用率随轮次爬升到 96%，这是长上下文 KV 缓存落地的直接证据。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>工作负载：编码 Agent 多轮会话回放，512 会话×16 轮=8192 请求，8×B200，Qwen3-Coder 与 Qwen3.8 两个模型。</li>
+<li>吞吐：Qwen3-Coder 0.391→0.634 请求/秒（1.62 倍），Qwen3.8 0.388→1.104 请求/秒（2.83 倍）；SSD 卸载总回放墙钟缩短约 38% 与 65%。</li>
+<li>延迟：Qwen3.8 TTFT 中位数 2.73→0.75 秒；提示复用率第 16 轮 96.0%。</li>
+<li>存储行为：写放大均值约 1.02；SSD 读总量 Coder 78.32/83.99 TiB、Qwen3.8 28.39/36.06 TiB。</li>
+<li>方案对比：SSD 专属 GDS 路径实测性能与 RAM 辅助 SSD 卸载相近，省掉 1TiB 可复用 host RAM 缓存；只加 host RAM 缓存、不用 SSD 卸载，几乎没有改善。</li>
+<li>留下的问题：复用率与吞吐的上限、更大规模下的 NVMe 层行为，仍待验证。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>执行摘要：SSD 卸载的提速数字与两条对比结论（host RAM 缓存无改善、GDS 路径可省 RAM）。</li>
+<li>编码 Agent 为什么需要地方存历史：多轮会话的历史 prompt 重叠，KV 缓存是复用的载体。</li>
+<li>Mooncake 与共享 NVMe 存储搭建卸载方案：Mooncake 做 KV 传输与共享，NVMe 层做跨会话持久化。</li>
+<li>编码 Agent 工作负载如何回放：512 会话×16 轮，两个模型，8×B200。</li>
+<li>结果：吞吐、TTFT、提示复用率、写放大、SSD 读总量的分模型数字。</li>
+<li>这次验证确立了什么，还留下了什么：共享 NVMe 层有效，host RAM 缓存不是答案；规模化问题待验证。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
