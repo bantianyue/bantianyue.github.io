@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kimi-K3.1-Pro 教 Qwen3.8-27B 写老挝语：3800 条翻译，达到教师 93% 的水平 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Kimi-K3.1-Pro 教 Qwen3.8-27B 写老挝语：3800 条翻译，达到教师 93% 的水平</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://x.com/togethercompute/status/2126025460416921661">https://x.com/togethercompute/status/2126025460416921661</a></div>
+<h1>Kimi-K3.1-Pro 教 Qwen3.8-27B 写老挝语：3800 条翻译，达到教师 93% 的水平（4⭐，No.138）</h1>
+<ul>
+<li>原文：Distilling Kimi-K3.1-Pro into Qwen3.8-27B: Teaching a model a new language，Together AI（X Article）</li>
+<li>原文链接：https://x.com/togethercompute/status/2126025460416921661</li>
+<li>收藏日期：2026-11-27</li>
+<li>星级：4⭐</li>
+<li>主题：训练核心流程、数据管线</li>
+</ul>
+<h2>一句话要点</h2>
+<p>Qwen3.8-27B 写老挝语只得 5.5 分（chrF++，满分 100），11% 的输出是老挝文、其余大多是泰语；用 Kimi-K3.1-Pro 做教师离线策略蒸馏，约 3800 条教师翻译做 LoRA 微调后，学生老挝语 44.3 分、达到教师的 93%，100% 的输出是老挝文，泰语 47.8 分高于微调前；全部实验一共花了 260 美元。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>缺口找得准：50 句筛查就定位教师领先最大的语言（老挝语 49.0 分对 7.2 分），11 种语言全扫一遍再动手训练。</li>
+<li>诊断先于训练：基底模型的意思基本是对的、只是写错了语言（往返充分性 64.6 分，略高于人类老挝语参考译文），所以文字问题在头 25 到 50 步就修好，训练重心放在分数上。</li>
+<li>最难的是保住已有能力：只拿人类老挝语训练，泰语从 46.7 分崩到 5.3 分；混入约 1000 条教师泰语翻译后，泰语 47.8 分，高于微调前——持续学习的保护数据配方。</li>
+<li>数据比轮次划算：4 倍数据跑 1 个 epoch（43.2 分）胜过小数据集跑 3 个 epoch（41.3 分）；人类参考译文只有 997 条，教师能翻译任意英语文本，供给不受限。</li>
+<li>成本透明：教师数据 4000 条翻译只花 7.46 美元，全部实验 260 美元；一个适配器同时覆盖五种语言，泰语保持能力也还在。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>基底缺口：Qwen3.8-27B 老挝语 5.5 分、老挝文占比 11%；50 句筛查集上 7.2 分对教师 49.0 分；11 种低资源语言里老挝语缺口最大。</li>
+<li>蒸馏方法：离线策略蒸馏（教师生成文本、学生 SFT 模仿）；在线策略蒸馏因两模型不共享分词器、拿不到教师在学生 token 上的对数概率而不可行；教师调用是普通无服务器聊天请求，思考功能关闭。</li>
+<li>结果：最好运行老挝语 44.3 分（教师 47.5 分的 93%），缺口闭合率 (44.3−5.5)÷(47.5−5.5)=0.92；老挝文占比 100%；泰语 47.8 分（基底 46.7 分）。</li>
+<li>泰语教训：人类参考译文 SFT 老挝语 44.7 分、但泰语崩到 5.3 分；纯老挝语蒸馏泰语撑两轮后滑到 44.3 分；混入约 1000 条教师泰语翻译后，两次混合运行泰语 47.4 分和 47.8 分，全程不低于 47.3 分。</li>
+<li>数据供给：FLORES dev 只有 997 条人类参考译文；再加 3000 条教师翻译的维基百科句子，老挝语训练集从 965 条涨到 3834 条，老挝语从 41.9 分升到 44.3 分。</li>
+<li>五语言：一个适配器、8871 条教师翻译、831 步，老挝语 41.8、北索托语 48.0、约鲁巴语 25.7、祖鲁语 39.2、泰语 48.0；缺口闭合率分别为 87%、85%、71%、12%；祖鲁语训练中有 1% 到 2% 的输出掉进重复循环。</li>
+<li>训练设置：LoRA rank 64、alpha 128、峰值学习率 1e-4、5% 预热、余弦衰减到峰值的十分之一、批量大小 16；B200 模型资源自带生成器，训练中每 25 步评估；最好运行占资源 46 分钟（训练步 33.7 分钟、30 次评估 7.1 分钟）。</li>
+<li>成本：全部实验 260 美元（假定 B200 训练）；教师数据最便宜，4000 条老挝语翻译 7.46 美元；思考关闭时一句老挝语答案平均约 175 个输出 token，思考打开反而降分（43.5 分对 47.3 分）且多用约 8 倍 token。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>发现缺口：chrF++ 指标说明；50 句里 45 句泰文、6 句老挝文；老鼠翻译例子；50 句与 1012 句两组分数。</li>
+<li>方案：离线策略蒸馏：在线与离线蒸馏的区别；五步流程；四项评估指标（chrF++、老挝文占比、泰语保持、往返充分性）。</li>
+<li>泰语意外：人类参考译文对照运行：老挝语 25 步内从 6.7 分跳到 43.3 分，泰语从 46.7 分掉到 5.3 分；只评老挝语会误选这次运行。</li>
+<li>修复泰语：纯老挝语蒸馏泰语撑两轮；加约 1000 条教师泰语翻译后泰语 47.4 分和 47.8 分。</li>
+<li>补齐老挝语剩余缺口：人类参考译文的风格优势；教师风格对照打分 58 分对 47 分；4 倍数据 44.3 分；数据胜过轮次。</li>
+<li>结果：缺口闭合率公式 0.92；六行结果表；往返充分性：基底泰语输出 64.6 分、学生 65.7 分。</li>
+<li>五种语言上训练：8871 条翻译、831 步；五语言表；祖鲁语重复循环。</li>
+<li>如果你也有类似的缺口：四条经验（筛查、看错因、数据先于轮次、混入保护数据并持续打分）。</li>
+<li>做法详解：教师数据生成（无服务器调用、过滤规则、SFT 数据行格式）；训练学生（模型资源/训练器/生成器/会话、cookbook 三件事、训练循环代码、LoRA 设置）；测试集（三组切片）；时间与成本（260 美元、46 分钟）。</li>
+<li>自己试试：cookbook 三个配方脚本；部署文档链接。</li>
+</ul>
+<h2>局限</h2>
+<ul>
+<li>实验只覆盖翻译任务与 Qwen3.8-27B 一个学生、Kimi-K3.1-Pro 一个教师；其他任务类型（推理、代码）上离线蒸馏是否同样有效未验证。</li>
+<li>五语言运行里祖鲁语提升最小（12% 缺口闭合），1% 到 2% 的输出掉进重复循环，作者只给出“更多祖鲁语数据或一个重复惩罚”的方向，未实测。</li>
+<li>最好的老挝语运行（44.3 分）仍比人类参考译文 SFT（44.7 分）低不到半分，且人类参考译文在人类参考译文指标上有风格优势，两种路线的上限未拉开。</li>
+<li>成本数字假定在 B200 上训练；教师价格（每百万输入 token 2 美元、每百万输出 token 10 美元）是当时的无服务器定价。</li>
+<li>附录（训练曲线、学习率曲线、各运行步数与损失表）未收入精读（按规则㉑删除附录）。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>缺口筛查配方：每个语言 50 句就能看出教师领先在哪里；先看基底模型错在哪里（语义对、语言错）再动手训练。</li>
+<li>持续学习保护配方：教新技能时混入邻近已有技能的数据（这里是泰语），训练中持续打分；只评新技能会误选搞坏旧技能的运行。</li>
+<li>教师数据供给：人类参考译文有限（997 条）时，教师可翻译任意英语文本扩到 3834 条；过滤规则（目标文字占比不低于 70%、非英语原文回声）去掉了 4% 的翻译。</li>
+<li>评估四指标：chrF++、目标文字占比、邻近语言保持、往返充分性（不依赖参考译文风格，独立检查意思）。</li>
+<li>训练中评估架构：模型资源自带生成器，同一资源上训练 LoRA 并采样评估，不用另外部署评估端点；每 25 步评估一次。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
