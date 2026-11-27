@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sleep：窗口填满就睡一觉，循环前向细化 KV 缓存，上下文效率提升 2.39 倍 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>Sleep：窗口填满就睡一觉，循环前向细化 KV 缓存，上下文效率提升 2.39 倍</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/abs/2611.32802">https://arxiv.org/abs/2611.32802</a></div>
+<h1>Sleep：窗口填满就睡一觉，循环前向细化 KV 缓存，上下文效率提升 2.39 倍（4⭐，No.140）</h1>
+<ul>
+<li>原文：Sample-Efficient In-Context Adaptation via Sleep，arXiv 2611.32802，CMU / Yale / Microsoft Research，2026-11-24</li>
+<li>原文链接：https://arxiv.org/abs/2611.32802</li>
+<li>收藏日期：2026-11-27</li>
+<li>星级：4⭐</li>
+<li>主题：训练、并行策略（训练）、KV 缓存</li>
+</ul>
+<h2>一句话要点</h2>
+<p>在 1.2B 参数模型上，每攒满 256 个 token 就睡一觉、用 N−1 次循环前向细化 KV 缓存：N=4 时，达到无睡眠基线同样的预测 loss，上下文 token 用量减少 2.39 倍；参数量增加不到 2%，KV 缓存不增大；端到端解码延迟一次睡眠迭代时增加不到 3%，128k 前缀、三次睡眠迭代时增加 8%。</p>
+<h2>为什么值得读</h2>
+<ul>
+<li>它把“睡眠”做成可算的机制：窗口 W=256 攒满就睡，睡眠期双向注意力 + N−1 次循环前向细化 KV，不是比喻，是训练与推理里都可跑的流程。</li>
+<li>样本效率的数字很干净：N=2/N=4 在 held-out 代码上达到无睡眠基线相同 loss，上下文 token 分别少 2.10×/2.39×；代价是训练算力约 N 倍，预填充约慢 N 倍，账算得清楚。</li>
+<li>推理成本不随睡眠失控：睡眠期的额外算力不占用清醒期，端到端解码延迟 N=2 时 +&lt;3%、N=4（128k 前缀、3 次睡眠迭代）+8%；首 token 时间约按 N 缩放。</li>
+<li>机制小而完整：AttnRes（块大小 4，1/16 隐藏维做路由）+ GRU 式门控更新 K/V，参数量增加 &lt;2%、KV 缓存不增大，改动面小。</li>
+</ul>
+<h2>核心结论</h2>
+<ul>
+<li>方法：W=256，每攒满 256 个 token 睡一觉；睡眠期双向注意力，N−1 次循环前向细化 KV；AttnRes（块大小 4，1/16 隐藏维做路由）+ GRU 式门控更新 K/V。</li>
+<li>样本效率：N=2/N=4 在 held-out 代码上达到无睡眠基线相同 loss，上下文 token 分别少 2.10×/2.39×。</li>
+<li>成本：参数量增加 &lt;2%，KV 缓存不增大；训练算力约 N 倍，预填充约慢 N 倍；端到端解码延迟 N=2 时 +&lt;3%、N=4（128k 前缀、3 次睡眠迭代）+8%；首 token 时间约按 N 缩放。</li>
+<li>规模：预训练至多 1.2B 参数、至多 100B token。</li>
+<li>评估：负对数似然、少样本学习、推理成本、循环基线与 KV 门控，四组评估分开给数字。</li>
+</ul>
+<h2>分节要点</h2>
+<ul>
+<li>样本效率与睡眠：问题定义，睡眠期的直觉与 N=2/N=4 的效率数字。</li>
+<li>背景：注意力与计算深度；深度循环、睡眠与训练算力。</li>
+<li>方法：睡一觉，细化 KV 缓存：W=256、双向注意力、循环前向、AttnRes + GRU 门控。</li>
+<li>实验设置：预训练规模（至多 1.2B 参数、100B token）与评估设置。</li>
+<li>评估：负对数似然（2.10×/2.39×）；少样本学习；推理成本、循环基线与 KV 门控。</li>
+<li>结论：上下文效率提升 2.39 倍，代价是训练算力与预填充约 N 倍。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
