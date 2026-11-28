@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROCm InferaSim：11 个锚点 9.1 GPU 小时，算出 226 种服务配置 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>ROCm InferaSim：11 个锚点 9.1 GPU 小时，算出 226 种服务配置</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://rocm.blogs.amd.com/software-tools-optimization/inferasim/README.html">https://rocm.blogs.amd.com/software-tools-optimization/inferasim/README.html</a></div>
+<h1>ROCm InferaSim：11 个锚点 9.1 GPU 小时，算出 226 种服务配置（4⭐，No.148）</h1>
+<ul>
+<li>原文：ROCm InferaSim: Cut LLM Serving Trial Costs and Deploy the Best Configuration，Anshu Raina、Yao Fu、Zhang Jiejing、Peyman Razaghi 等 14 人，ROCm 博客，2026-11-06</li>
+<li>原文链接：https://rocm.blogs.amd.com/software-tools-optimization/inferasim/README.html</li>
+<li>收藏日期：2026-11-28</li>
+<li>星级：4⭐</li>
+<li>主题：GPU kernel/性能优化</li>
+<li>标签：GPU kernel/性能优化、训练推理一致性、并行策略（推理）</li>
+</ul>
+<h2>一句话要点</h2>
+<p>部署一个 LLM 要在引擎、并行排布、精度与调度设置里做大量选择，全部测一遍约 25,000 GPU 小时；InferaSim 每组核只测一次、存成锚点，解析迁移律把这一次测量搬到用这组核的全部配置上，调优 agent 与混合规划器在投影里搜索、只把短名单拿到 GPU 上确认。在 MI355X 上，11 个锚点花 9.1 GPU 小时，覆盖了实测要花 204 GPU 小时的 226 种配置，固定长度流量 TPOT 中位误差 8.1%。</p>
+<h2>为什么值得读</h2>
+<p>这篇把“服务配置搜索”从暴力实测改成解析投影，方法论拆得干净：什么参数换核、什么参数可迁移，一张表划清；锚点、步模型、迁移律、投影器、DES、调优 agent、混合规划器七个模型各算什么，一张表列清；缩减、测量、恢复又把单节点测量伸到多节点、解耦与宿主卸载。验证一节不回避误差：固定长度 8.1%、智能体 8% 与 14%、解耦 5.5%，以及排序正确率 93.4%，数字与适用条件一起给。</p>
+<h2>核心结论</h2>
+<ul>
+<li>锚点：一次测量存成 JSON，装批量扫描的实测预填充与解码步延迟加运行签名；换批量、上下文、并行宽度或副本数不换核，解析迁移；换精度、注意力后端、图模式或投机才换核；搜索每组核只需要一次测量加短名单上的几次确认。</li>
+<li>两种模式：锚定模式默认，用匹配的锚点校准步模型；模拟模式完全解析、不用锚点，只给核定价，适合在同一引擎内排序候选、不适合报绝对数；每次投影在一颗 CPU 核上不到半秒。</li>
+<li>架构：七个模型（步模型、迁移律、集合模型、流水线模型、内存模型、调度器与缓存模型、舰队与成本模型）合起来算任意形状下引擎一步的成本，喂给解析投影器（稳态均值）与 DES（百分位、排队等待、前缀缓存命中率）；要看长尾就得用 DES：DeepSeek-V4-Pro TP8、64 路并发，token 间延迟中位 21.7 毫秒，p99.9 却有 1392 毫秒。</li>
+<li>搬运律：解码跨 TP 搬运时保留不分片的固定下限、只把其余部分除以 TP，TP4 锚点搬到 TP8 中位误差 0.9%，整步直接除掉误差 44.1%；预填充拟合 F + a·n + b·n²，两个宽度上 F 的估计在 1% 以内一致；图捕获下解码是台阶，33 的批量垫到 40、按 40 付费，投影查实测台阶。</li>
+<li>缩减、测量、恢复：目标缩到至多一个节点上测，再解析恢复被移除的部分；流程来自 Primus Projection，InferaSim 补上解耦池、宿主 KV 层级与请求排队；测量始终只占一个节点。</li>
+<li>实例：智能体轨迹 130,000 prompt token、900 生成、92% 前缀已算过；原始 144:1 的提示输出比会把几乎全部 GPU 给预填充，实际前缀复用后每请求只算 10,400 提示 token、有效比 11.6:1，而解码抱着 131k token KV 缓存跑全部 900 步、内存决定解码池；混合规划器挑的 DeepSeek-V4-Pro 拆分是实测最优或在 1.5% 以内，只看共置的挑法差 40% 以上。</li>
+<li>调优：调优 agent 在 36 个服务杠杆里搜 24 个投影目标，种子规划器一次改一个杠杆，LLM 循环提议组合、只提议不算数；混合规划器前 5 名在 23 个模型与延迟档位组合里的 22 个上，都含一个在实测最优 12% 以内的配置。</li>
+<li>帕累托与验证：529 个实测配置、25 张图，每 GPU 吞吐中位误差 7.0%，206 个实测前沿点里的 170 个也在预测前沿上；固定长度 TPOT 8.1%、吞吐 8.8%、TTFT 13.6%（172 配置、8 模型、11 锚点）；智能体约 8% 吞吐、14% ITL、23% TTFT（95 配置、6 模型、28 锚点）；解耦 5.5% 吞吐、5.3% 交互性（159 个 8–24 GPU 部署，无解耦锚点）；投机解码 43 次 MTP 运行，交互性 12.2% 以内；SGLang PP 1–8，TPOT 2.3–9.2% 以内。</li>
+</ul>
+<h2>分节</h2>
+<p>引言 / 核心想法：稀疏测量，解析迁移 / 快速上手 / 架构：七个模型，两个求解器 / 一次测量怎么搬运 / 缩减、测量、恢复：走出一个节点 / 实例：给智能体工作负载配解耦集群 / 智能体流量上的 KV 卸载 / 用 InferaSim 调优 / 每个模型一条帕累托前沿 / 验证：预测与实测对上了吗。</p>
+<h2>局限</h2>
+<ul>
+<li>模拟模式只给核定价、不能报绝对数；锚定模式只评锚点覆盖的配置（同一引擎构建与排布，目标并发 4 倍以内），覆盖之外的配置不在验证范围内。</li>
+<li>智能体流量 TTFT 误差 23%、ITL 14%，高于固定长度流量的 13.6% 与 8.1%；KV 卸载运行的吞吐预测与实测相差 4–16%，误差带比固定长度更宽。</li>
+<li>解耦排布的胜负判断在 1k/1k 的 21 个决策里错 2 次、8k/1k 的 27 次里错 4 次；混合规划器前 5 名在 23 个组合里有 1 个组合没进 12% 以内。</li>
+<li>数字来自 MI355X 节点与 ROCm 7 构建（vLLM、SGLang、ATOM）及 InferenceX 公开基准，换硬件、软件版本或工作负载需重新验证；博客的免责声明按规则未入正文。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>锚点加迁移律：区分“换核的参数”与“可迁移的参数”，一次测量覆盖整组配置；固定下限不分片、只分片可分片部分，是 TP 搬运误差从 44.1% 降到 0.9% 的关键。</li>
+<li>预填充曲线拟合：F + a·n + b·n²，固定成本跨并行度保持、每 token 项分片；图捕获下按实测台阶查表，不插平滑曲线。</li>
+<li>缩减、测量、恢复：把大部署缩到一个节点上测，再解析恢复拿掉的部分；测量成本与部署规模脱钩。</li>
+<li>短名单加确认：LLM 只提议、投影器算数、非法与超内存候选直接丢掉；预测只负责排序与短名单，最终确认永远回到 GPU 实测。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
