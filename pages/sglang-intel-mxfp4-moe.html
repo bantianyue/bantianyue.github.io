@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SGLang 登陆 Intel：Xeon 与 GPU 各走执行路径，MXFP4 专家权重 32 个只占 17 字节 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>SGLang 登陆 Intel：Xeon 与 GPU 各走执行路径，MXFP4 专家权重 32 个只占 17 字节</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://www.lmsys.org/blog/2026-11-27-sglang-intel/">https://www.lmsys.org/blog/2026-11-27-sglang-intel/</a></div>
+<h1>SGLang 登陆 Intel：Xeon 与 GPU 各走执行路径，MXFP4 专家权重 32 个只占 17 字节（4⭐，No.147）</h1>
+<ul>
+<li>原文：SGLang on Intel Xeon CPUs and Intel GPUs as First-Class Platforms: Execution Paths and Low-Precision Inference，RadixArk &amp; Intel，LMSYS 博客，2026-11-27</li>
+<li>原文链接：https://www.lmsys.org/blog/2026-11-27-sglang-intel/</li>
+<li>收藏日期：2026-11-28</li>
+<li>星级：4⭐</li>
+<li>主题：GPU kernel/性能优化</li>
+<li>标签：GPU kernel/性能优化、训练推理一致性、并行策略（推理）</li>
+</ul>
+<h2>一句话要点</h2>
+<p>SGLang 把 Intel Xeon CPU 与 Intel GPU（XPU）做成一等公民：同一服务接口之下，Xeon 靠 AMX 矩阵加速加 NUMA 亲和，GPU 靠 SYCL 核加分组 MoE GEMM；Xe2 上的 MXFP4 路径把专家权重以 4 位打包存在显存里，进分组 GEMM 核才解包成 BF16，32 个权重 17 字节对 BF16 的 64 字节；EPD 异构排布只是示意图。</p>
+<h2>为什么值得读</h2>
+<p>这篇把“一个推理框架如何登陆一个新硬件平台”拆成可对照的工程清单：接口层统一、执行层按后端特化、核的效率由周围执行路径的形状与访存模式决定。MXFP4 一节是全文最硬的机制——权重打包、核内解包、选择性量化三条规则写得干净，且明确划出边界（Xe2 / BMG、专家并行未验证、存储对比不是吞吐测量）。EPD 一节则反过来示范了克制：候选排布只画逻辑数据流，路由与传输细节明确略去、不承诺性能。</p>
+<h2>核心结论</h2>
+<ul>
+<li>共享接口、专属执行：SGLang 提供统一服务接口，核实现注意力与专家 GEMM，执行层组织线程、缓冲与数据排布；核效率取决于周围执行路径给出的形状、布局与访存模式。Intel 上游工作从 CPU 使能扩展到 CPU 与 XPU 两条后端，覆盖优化核、注意力与 MoE、量化、图执行、分布式推理、模型使能与持续集成。</li>
+<li>Xeon 四组控制：AMX 矩阵加速（收益取决于矩阵形状与批量）；W8A8 INT8（--quantization w8a8_int8，相对 BF16 减少操作数存储）；NUMA 感知（按 NUMA 或 L3 缓存拓扑分组物理核，包括 Xeon 子 NUMA 簇，SGLANG_CPU_OMP_THREADS_BIND 提供每 rank 亲和控制）；--enable-torch-compile（解码按批量大小分桶，预填充图按总 token 数分桶，完整预填充后端仍是实验性、需显式开启）。</li>
+<li>XPU 服务栈：Flash Attention 与 MLA 各有预填充与解码专属路径；分组 GEMM 处理不同 token 数的专家计算，MoE 执行路径留在设备上；FP8 与 MXFP4 专家计算路径（可用性取决于 GPU 架构、检查点格式与执行路径）；EAGLE 投机解码（树构建、验证与投机采样核）；XPU 图执行（解码按批量大小、预填充按 token 长度分桶捕获，另有分段预填充选项，均为可选开启）。</li>
+<li>MXFP4：每 32 个权重一块，权重 16 字节加 1 字节 scale，填充前共 17 字节，BF16 要 64 字节；W4A16 是 4 位存权重配 16 位激活，权重 tile 在核内解包并缩放成 BF16，不是原生 FP4 算术；GPT-OSS-20B 的例子里只有 MoE 专家权重走 MXFP4，注意力、路由、嵌入与输出头层仍是 BF16，KV 缓存、激活与工作区仍然计入总内存；针对 Xe2 / BMG（Arc B 系列与 Arc Pro B 系列），专家并行尚未验证。</li>
+<li>EPD：编码-预填充-解码拆分到不同资源；候选部署是尺寸合适的视觉编码器放 Intel Xeon，预填充与解码放在两个独立的 Intel GPU 工作池里；代价是额外的嵌向量与 KV 缓存传输加工作池间协调；映射需要验证编码器在 CPU 上的支持、GPU 执行路径、张量与 KV 缓存格式、跨后端传输。</li>
+<li>上游优先：RadixArk 与 Intel 的联合工程跨越整个 AI 栈，创新直接集成进 SGLang 核心仓库；朱邦华（RadixArk CTO）强调核、内存管理与服务执行必须针对硬件一起调优，维护并验证执行路径与写出优化同等重要；比尔·皮尔森（Intel 数据中心软件副总裁）强调开发者经同样的 SGLang 体验部署模型、跨后端迁移不用大规模重构。</li>
+</ul>
+<h2>分节</h2>
+<p>引言 / 同一个服务接口，两条执行路径 / Xeon CPU：原生推理的四组控制 / Intel GPU：原生 XPU 服务栈 / MXFP4 细看：权重压在显存里，进核再解包 / 异构推理：EPD 把编码、预填充、解码拆开 / 上游优先的联合工程 / 下一步 / 上手：从有文档的配置开始。</p>
+<h2>局限</h2>
+<ul>
+<li>这篇是联合工程的进展介绍，没有端到端吞吐或延迟实测数字：17 字节对 64 字节是原始存储对比，不是模型内存或吞吐测量；图 1 明确不承诺功能对等或 CPU-GPU 工作负载自动排布；图 3 明确不是已验证的 Intel 配置。</li>
+<li>MXFP4 路径只针对 Xe2 / BMG，专家并行尚未验证；其他设备与检查点需要单独验证；FP8 与 MXFP4 的可用性取决于 GPU 架构、检查点格式与所选执行路径。</li>
+<li>图执行（CPU 完整预填充后端、XPU 解码与预填充图）均为实验性或可选开启，取决于所选模型与后端配置；只构建 sgl-kernel-xpu 核库本身不是完整的 SGLang 服务安装。</li>
+<li>EAGLE 投机解码的收益取决于候选接受率与起草、验证的成本，模型与后端兼容性仍需验证；只把矩阵核做快，消除不了 KV 缓存流量、NUMA 效应或并行通信开销。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>接口与执行分离：共享服务接口之下按后端特化执行路径；核的效率取决于周围执行路径给出的形状、布局与访存模式，两个层面必须一起调。</li>
+<li>权重打包、进核再解包：W4A16 把解包与缩放放在 GEMM 核内，避免物化完整 BF16 副本；选择性量化只压专家权重，其余层保持 BF16，存储省在常驻副本上、不是算术上。</li>
+<li>分桶图执行：解码按批量大小、预填充按 token 长度分桶捕获图，用分桶控制图捕获的组合爆炸；实验性路径显式开启、不默认启用。</li>
+<li>上游优先：平台支持直接进核心仓库、随框架演进同步验证，而不是维护分支补丁；支持按后端与配置逐项验证，不承诺功能对等。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
