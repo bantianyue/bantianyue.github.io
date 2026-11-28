@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ByteDance Seed MoLT：把 KV 当作跨圈记忆的循环 Transformer · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>ByteDance Seed MoLT：把 KV 当作跨圈记忆的循环 Transformer</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://arxiv.org/abs/2611.34923">https://arxiv.org/abs/2611.34923</a></div>
+<h1>ByteDance Seed MoLT：把 KV 当作跨圈记忆的循环 Transformer（4⭐，No.146）</h1>
+<ul>
+<li>原文：Mixture-of-Loops Transformer，Lianghui Zhu、Shijie Wang、Xinggang Wang、Jinze Bai、Bo Wang、Xiang Bai（华中科技大学、ByteDance Seed、多伦多大学），arXiv 2611.34923，2026-11-25</li>
+<li>原文链接：https://arxiv.org/abs/2611.34923</li>
+<li>收藏日期：2026-11-28</li>
+<li>星级：4⭐</li>
+<li>主题：并行策略（训练）</li>
+<li>标签：并行策略（训练）、训练推理一致性、GPU kernel/性能优化</li>
+</ul>
+<h2>一句话要点</h2>
+<p>循环 Transformer 的瓶颈不在循环本身，而在循环之间传什么：残差只传一个压缩后的状态，信息在层与循环之间不断稀释。MoLT 把算好的 KV 当作记忆——MoLA 让每一层在同一个注意力分布里同时读序列 KV 与同位置深度 KV；MoLT-KV 每循环从嵌入重启、只读前一循环严格前缀的记忆 KV，去掉同位置跨循环依赖，实现单次遍历 MoL 解码；U-MoLT 再把记忆构建与预测读出分开。400B token 预训练里 U-MoLT 在 700M 上以 1.7 倍 token 效率追平 OLMo3，3B MoE 上 10 域困惑度降 0.75、10 项任务准确率升 2.1 个百分点；MoL-Hybrid-2 解码下 4,096 token 提示总耗时 996.6 毫秒，追平非循环 OLMo3 的 1,000.6 毫秒。</p>
+<h2>为什么值得读</h2>
+<p>这篇把循环架构的表达力与效率矛盾拆成一个可操作的设计问题：循环之间到底应该传什么。三个变体各取一个极端——MoLT-R 要表达力、MoLT-KV 要解码效率、U-MoLT 要两者平衡——再用同一套消融矩阵（32 配置）与同一套解码计时把取舍量化到底。循环强迫与 MoL 解码的组合是循环模型第一次在训练循环视野之外仍能单次遍历运行；U-MoLT 的记忆与预测分离则是可迁移到其他架构的设计模式。</p>
+<h2>核心结论</h2>
+<ul>
+<li>MoLA：每一层在同一个注意力分布里联合读序列 KV 来源 S 与深度 KV 来源 D，查询决定各来源权重，无独立门控；QK 归一化与 RoPE 各头独立应用，深度键保留写者的归一化与旋转、读者直接复用。</li>
+<li>MoLT-R（循环残差）：保留跨循环残差流，MoLA 直读当前循环与前一循环在同一 token 位置的局部 KV；700M 上平均 10 项任务准确率 59.2%、平均 10 域困惑度 14.84，为三变体最佳总分，零新增参数。</li>
+<li>MoLT-KV（循环 KV）：每循环从嵌入重启，只读前一循环严格前缀（j &lt; t）的记忆 KV；去掉同位置跨循环依赖后，每个反馈循环退化为跨 token 位置的严格三角递推，位置 0 在第 2 循环稳定，其后每个位置在其前缀之后一个循环稳定。</li>
+<li>循环强迫：类比教师强迫，各反馈循环从前一循环的严格前缀记忆 KV 出发并行训练，把训练从 T 个顺序步降到 N 次并行遍；2 循环训练后，单次遍历解码的平均续写交叉熵与固定 2 循环解码相近（ΔCE −0.0005 到 +0.0014）。</li>
+<li>MoL 解码：从空缓存起每 token 一次遍历，读缓存的前缀记忆 KV 与当前循环局部 KV，追加新记忆 KV；MoL-Hybrid 配 1 循环或 2 循环并行预填充，4,096 token 提示下总耗时仍在 1 秒附近，相对固定 2 循环解码降低 49.2% 到 50.0%（MoLT-KV）与 32.1% 到 32.6%（U-MoLT）。</li>
+<li>U-MoLT：LE 层循环 KV 编码器建记忆、LD 层因果交叉解码器只读编码器输出做预测；等分 LE = LD = L/2 时，预填充块深度、解码遍历次数与持久 KV 存储四项主导推理成本全部追平非循环骨干；独立解码器 KV 投影（重投影）在表 2 全部匹配设置里验证交叉熵低于 MoLT-KV。</li>
+<li>扩展：700M 上 U-MoLT 平均准确率 +2.5 个百分点、平均困惑度 15.64 降到 14.86；1.5B 上 +1.4 个百分点；3B MoE（660M 激活参数）上 +2.1 个百分点、平均困惑度 13.99 降到 13.24；配对 700M/400B 运行里 U-MoLT 在 232.8B token 追平 OLMo3 的 400B token 平均验证交叉熵（1.7 倍 token 效率）。</li>
+<li>Qwen 适配：Qwen3.5-0.8B-Base 持续预训练 100B token 后，两种 U-MoLT 适配在 11 个域的验证交叉熵全部低于匹配基线；U-MoLT-CT1 均值 2.496 降到 2.480，66.3 到 78.3B token 追平基线终点，平均 token 效率 1.4 倍；只增加 3.15M 参数（+0.42%）。</li>
+<li>消融：32 配置矩阵里，稠密跨循环重投影的方法（29）交叉熵最低 3.273；稀疏跨循环重投影的方法（32）为更快替代，3.276、968 毫秒/更新；循环损失权重从 1:1 变到 1:4，第二循环交叉熵 3.279 降到 3.272，第一循环交叉熵 3.306 升到 3.322。</li>
+</ul>
+<h2>分节</h2>
+<p>引言 / 相关工作 / 混合循环 Transformer（循环残差与循环 KV、混合循环注意力、U-MoLT、循环强迫训练、MoL 解码） / 实验（实验设置、组件消融、扩展到稠密与 MoE 模型、MoL 解码：质量与效率、Qwen 持续预训练适配） / 讨论（变体选择、U-MoLT 的表征解耦、三阶段编码器—颈—解码器、扩展到更大模型） / 结论。</p>
+<h2>局限</h2>
+<ul>
+<li>扩展实验只到 700M 与 1.5B 稠密模型、3B MoE 模型；循环复用的增益随更大模型容量与训练预算如何演变仍是开放问题。</li>
+<li>跨循环变体在同一 token 读前一循环局部 KV，只有当前循环变体支持单次遍历 MoL 解码；MoLT-R 仍需固定 N 循环解码与 N 份序列 KV 缓存。</li>
+<li>Qwen 适配里，强制解码器 GDN 层只读编码器投影记忆的 U-MoLT-CT2 比保留解码器状态 GDN 写操作的 CT1 落后 0.003 平均交叉熵，且未实现精确的单位置预填充省略；混合骨干上交叉解码器设计依赖序列层类型。</li>
+<li>附录的形式证明（有限前缀稳定、遍历与 KV 存储成本分解）与 700M 轨迹图（图 6-8）、附录表 10-13 按规则未入正文。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>KV 当记忆：把跨层、跨循环的中间表示当作可直接读取的 KV 来源，而不是只经残差流传递；MoLA 用一个注意力分布统一序列 KV 与深度 KV。</li>
+<li>嵌入重启加严格前缀掩码：去掉同位置跨循环依赖，是单次遍历解码成立的关键；位置 0 在第 2 循环稳定的三角递推论证可迁移到其他反馈设计。</li>
+<li>记忆与预测分离：编码器输出居中、不直接塌缩到下一个 token 的 logits，解码器残差专用于预测；独立的每层解码器 KV 投影让各层读同一份编码器输出的不同视角。</li>
+<li>循环强迫：多循环监督加并行训练，让递归生成的前缀记忆 KV 与训练时的记忆 KV 对齐；共享读出监督、嵌入重启与归一化三项设计选择支撑这一对齐。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
