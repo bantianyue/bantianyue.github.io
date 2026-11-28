@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlashInfer 登陆 ROCm 10.1：API 不变，backend=auto 逐调用选核 · 中文精读</title>
+<style>
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; color: #222; background: #fafafa; }
+  .nav { font-size: 13px; margin-bottom: 20px; }
+  .nav a { color: #1a56db; text-decoration: none; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .orig { font-size: 12px; color: #999; margin-bottom: 20px; }
+  .orig a { color: #1a56db; }
+  h2 { font-size: 18px; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #222; }
+  h3 { font-size: 15px; margin: 20px 0 8px; }
+  p, li { font-size: 14px; line-height: 1.75; color: #333; }
+  p { margin: 0 0 10px; }
+  ul, ol { padding-left: 22px; margin: 6px 0 12px; }
+  code { background: #f4f4f5; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: #f4f4f5; padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 10px 0 16px; }
+  th, td { border: 1px solid #ddd; padding: 8px 10px; text-align: left; line-height: 1.6; }
+  th { background: #f0f4ff; }
+  blockquote { border-left: 3px solid #1a56db; margin: 10px 0; padding: 6px 14px; color: #555; background: #f7f9ff; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 24px 0; }
+  .foot { margin-top: 30px; font-size: 12px; color: #999; }
+</style>
+</head>
+<body>
+<div class="nav"><a href="index.html">← 返回预训练学习 · 资料库</a></div>
+<h1>FlashInfer 登陆 ROCm 10.1：API 不变，backend=auto 逐调用选核</h1>
+<div class="orig">中文精读 ｜ 原文：<a href="https://rocm.blogs.amd.com/artificial-intelligence/flashinfer-release3/README.html">https://rocm.blogs.amd.com/artificial-intelligence/flashinfer-release3/README.html</a></div>
+<h1>FlashInfer 登陆 ROCm 10.1：API 不变，backend=auto 逐调用选核（4⭐，No.149）</h1>
+<p><strong>一句话要点</strong>：FlashInfer 的 API 完整搬上 AMD ROCm 10.1，解码、预填充、MLA 包装保持上游 v0.6.18 的签名与参数顺序；<code>backend="auto"</code> 在每个调用上按逐架构路由表在 AITER 与树内 HIP 核之间选核。</p>
+<p><strong>为什么值得读</strong>：这是 FlashInfer 首次在 AMD 平台上提供与 CUDA 相同的调用面，且路由决策是逐调用、逐架构的，不是编译期开关；CDNA4 的一条转置指令替换 6 次洗牌、FP8 编码不对称、构建只认 Docker 钉住配置，三个细节都直接决定能不能在 MI300/MI350 上把库跑起来。</p>
+<p><strong>核心结论</strong>：
+- API 本身与 CUDA 上相同：相同的包装、相同的 <code>plan()</code> 与 <code>run()</code> 模型；解码、预填充、MLA 包装保持上游 FlashInfer v0.6.18 的签名，连参数顺序都不变。
+- API 之下，树内 HIP 核与 AITER 按调用分工，<code>backend="auto"</code> 逐调用选：<code>plan()</code> 先问 AITER 能不能接这个调用（数据类型、KV 排布、掩码、头维度），再按两个架构上实测的逐架构路由规则选；规则在一张表里（<code>flashinfer/rocm/arch_caps.py</code>），仓库的支持矩阵就是从这张表生成的。
+- AITER 在 C++ 层面集成：调用跑在 AITER 上时，FlashInfer 从自己的 C++ 代码启动核——直接加载 AITER 编译好的注意力核，或链接 AITER 的 C++ 入口（MoE、norm、激活、RoPE 与 KV append），而不是走 AITER 的 Python API；AITER 的 Python 一侧只在 <code>plan()</code> 时、或对没有 <code>plan()</code> 的算子在第一次调用时，用来构建、定位或探测核变体；MLA 是唯一仍经 Python 跑 AITER 的算子。
+- AITER 的 MoE 是编译好的、按架构选的变体：按 EP（专家并行）规模、每个 token 的 top-k 个专家、以及 expert-parallel 的通信方式挑核；这三个量决定了选哪个编译好的核变体与通信路径。
+- CDNA4（gfx950）上，FMA 分块与共享内存之间搬运是按 16 字节向量做的，16 字节向量是一次加载的量：FMA 的分块按行来算，每次加载对应一行。加载的向量分两半：前半部分的 8 个元素进一个寄存器，后半部分的 8 个元素进另一个寄存器。
+- CDNA4 一条指令 <code>ds_read_b64_tr_b16</code> 做转置 V，替换 6 次 <code>ds_bpermute_b32</code> 跨通道洗牌：种子重算，共享内存排布不变；这是一个 CDNA4 专属的转置读取指令。
+- <code>plan()</code> 之后，批量预填充与批量解码包装在 <code>wrapper.backend</code> 里报告选择（AITER 是 <code>aiter</code>，树内核是 <code>fa2</code>），大多数 AITER 拒绝的原因在 <code>wrapper.backend_fallback_reason</code> 里。
+- FP8 编码不对称（最容易踩的坑）：树内核只认 FNUZ，OCP 会被静默读错；gfx950 上给 AITER FP8 预填充写的 KV 缓存，解码读不了。
+- 构建只支持 Docker 镜像钉住的配置（ROCm 10.1.0、PyTorch 2.12.0、Python 3.12、Ubuntu 24.04、amd-aiter 0.1.21.post2）；<code>torch.compile</code> 在 ROCm 上没有后端支持，FlashInfer 的包装是按编译后的图里的注意力调用来做的，两个栈互不干涉。
+- 上游 v0.6.18 更大，缺失的部分按原因分：ROCm 上不支持的是包 CUDA 专属库、PTX、SM 门控核或 CuTe DSL 的模块；没有 ROCm 实现的是不沾这些的普通核；<code>layernorm</code> 与量化 norm 算子能导入、调用时失败（ROCm 的 norm 绑定没有导出它们）。</p>
+<h2>一、新版本带来什么</h2>
+<p>FlashInfer on ROCm 把它的 API 带到 AMD Instinct GPU 上。本版接续预填充注意力版本：级联注意力、多头潜在注意力（MLA）、独立的旋转位置编码（RoPE）算子已经落地；新加 FP8 预填充、POD-Attention（预填充与解码叠在一个核里）、融合 MoE，以及图捕获下的 AITER 解码；全部跑在 CDNA3（gfx942：MI300X、MI325X）与 CDNA4（gfx950：MI350X、MI355X）上。</p>
+<h2>二、AITER 集成与逐调用路由</h2>
+<p>AITER 是 AMD 的推理核库，FlashInfer 在 ROCm 上把它当作第二后端。路由发生在每个调用上：<code>plan()</code> 先问 AITER 能不能接这个调用，再按逐架构路由表选核；选完后 <code>wrapper.backend</code> 报告选择（<code>aiter</code> 或 <code>fa2</code>），拒绝原因写在 <code>wrapper.backend_fallback_reason</code> 里。AITER 的 MoE 按 EP 规模、top-k 专家数、expert-parallel 通信方式挑编译好的核变体。</p>
+<h2>三、CDNA4 的转置指令与共享内存排布</h2>
+<p>CDNA4 上 FMA 分块与共享内存之间的搬运按 16 字节向量做，每次加载对应一行；向量分两半进两个寄存器。一条 <code>ds_read_b64_tr_b16</code> 指令做转置 V，替换 6 次 <code>ds_bpermute_b32</code> 跨通道洗牌，种子重算、共享内存排布不变。</p>
+<h2>四、FP8 编码不对称</h2>
+<p>树内核只认 FNUZ，OCP 会被静默读错；gfx950 上给 AITER FP8 预填充写的 KV 缓存，解码读不了。FP8 KV 缓存的读写双方必须用同一编码，否则是静默错误，不是报错。</p>
+<h2>五、构建与缺失的模块</h2>
+<p>构建只支持 Docker 镜像钉住的配置（ROCm 10.1.0、PyTorch 2.12.0、Python 3.12、Ubuntu 24.04、amd-aiter 0.1.21.post2）。缺失按原因分三类：ROCm 上不支持（CUDA 专属库、PTX、SM 门控核、CuTe DSL）、没有 ROCm 实现（普通核）、能导入但调用失败（norm 与量化 norm 算子）。</p>
+<h2>局限</h2>
+<ul>
+<li>只针对 CDNA3/CDNA4 两个架构，支持矩阵由 <code>arch_caps.py</code> 一张表生成。</li>
+<li>FP8 KV 缓存跨后端读写有静默读错的风险。</li>
+<li><code>torch.compile</code> 在 ROCm 上没有后端支持。</li>
+<li>部分上游模块缺失，且 <code>layernorm</code> 类算子能导入、调用时才失败，容易误判。</li>
+</ul>
+<h2>可复用的点</h2>
+<ul>
+<li>逐调用、逐架构的路由表（<code>arch_caps.py</code>）是“同一 API、双后端”设计的可复用模式：路由规则先实测、再写表、支持矩阵由表生成。</li>
+<li><code>wrapper.backend</code> 与 <code>wrapper.backend_fallback_reason</code> 的可观测性设计：每次调用都报告选了哪个后端、为什么拒绝另一个。</li>
+<li>CDNA4 的 <code>ds_read_b64_tr_b16</code> 转置读取指令：一条指令替换 6 次跨通道洗牌，种子重算、共享内存排布不变。</li>
+<li>FP8 编码不对称的教训：KV 缓存的读写双方必须用同一编码，静默读错比报错更危险。</li>
+</ul>
+<div class="foot">预训练学习 · 资料库 — 中文精读系列</div>
+</body>
+</html>
